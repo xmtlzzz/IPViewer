@@ -38,3 +38,24 @@ Implement every remaining TODO item that is not Excel-specific or IPv6, while pr
 - Kept dynamic inline styles only for data-driven color/width indicators and non-visible utility/test elements.
 - Added semantic classes for dialogs, import reports, subnet controls, rules actions, and export menus.
 - Preserved the existing offline single-file architecture, theme colors, and business behavior.
+
+## NetBox Integration Audit (2026-09-08)
+
+- [complete] Verify current NetBox REST API, authentication, and bulk write semantics
+- [complete] Map IPViewer fields and workflows to NetBox IPAM/DCIM resources
+- [complete] Assess browser/CORS/token/security constraints of direct sync
+- [complete] Produce an implementation recommendation and integration boundary
+
+## NetBox Decision
+
+- Recommended first implementation: a previewable IPAM sync for Prefix + IPAddress, with no destructive deletes.
+- Keep Device/Interface/MAC synchronization behind explicit target configuration and lookup/create policies.
+- Prefer a local bridge or same-origin deployment for write operations; do not persist a write-capable token in localStorage.
+
+## NetBox 第一阶段实现 (2026-09-08)
+
+- [complete] Add in-memory NetBox URL/token configuration and connection test
+- [complete] Build Prefix + IPAddress dry-run diff from local records and remote state
+- [complete] Add non-destructive bulk create/update with explicit confirmation
+- [complete] Add conflict/free mappings, unsupported-field warnings, remote ID links, and failure report
+- [complete] Run browser/API simulation regression, update docs, and commit

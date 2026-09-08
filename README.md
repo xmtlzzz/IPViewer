@@ -44,6 +44,25 @@
 
 **失误保护**：导入/恢复操作前自动备份当前数据，底部状态栏提供「恢复上次导入前备份」。
 
+### NetBox 同步（第一阶段）
+
+顶部「导入 NetBox」支持将本地网段和已登记 IPv4 地址预览并同步到 NetBox：
+
+- 网段 → `ipam/prefixes`；已分配地址 → `ipam/ip-addresses` 的 `active`；预留地址 → `reserved`
+- 主机名映射到 `dns_name`，用途映射到 `description`，备注映射到 `comments`
+- 空闲地址不创建；冲突地址默认跳过，也可在配置中明确映射为 `deprecated`
+- 同步前先读取远端并展示新增/更新/跳过差异；默认不删除远端对象
+- 设备名称、管理 IP、接口、MAC、设备类型暂不创建 NetBox DCIM 对象，仅在预览中提示未同步字段
+
+直接浏览器同步需要通过 HTTP 服务打开页面，并在 NetBox 中将页面来源加入精确的 CORS 白名单。例如：
+
+```text
+python -m http.server 8000
+浏览器打开 http://localhost:8000/index.html
+```
+
+NetBox 配置需允许 `http://localhost:8000`，再在页面输入 NetBox 地址和 API Token。Token 只保存在当前页面内存，不会写入 `localStorage` 或 JSON 备份；不要将 `CORS_ORIGIN_ALLOW_ALL` 用作生产配置。双击 `file://` 打开时，浏览器通常会因来源和 CORS 限制无法访问 NetBox API。
+
 ## 数据安全须知
 
 | 场景 | 数据是否安全 |

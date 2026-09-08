@@ -15,3 +15,9 @@
 - Removed user-visible layout inline styles from subnet creation, mapping confirmation, sheet selection, import reports, rules actions, and export menus.
 - Added responsive fallbacks for 900px/720px layouts and a stable mobile grid width to prevent IP labels from overlapping.
 - Re-ran Edge visual regression at desktop, 390px, and dark-theme states; verified `?selftest` at 32 / 32 with no failures.
+- Began NetBox integration audit against the current `netbox-community/netbox` main branch and release `v4.7.0`; confirmed REST bulk write support and identified IPAM/DCIM mapping and browser security boundaries.
+- Completed the NetBox audit: recommended Prefix + IPAddress as the first sync scope, explicit prerequisite/lookup configuration for Device/DCIM data, dry-run plus non-destructive writes, and a local bridge or same-origin deployment for token safety.
+- Implemented first-stage NetBox client in `index.html`: in-memory configuration/token, connection test, paginated Prefix/IPAddress reads, diff preview, explicit conflict policy, and separate bulk create/update requests with local remote-ID links.
+- Added NetBox mapping selftests and README guidance for HTTP serving, CORS, and token handling.
+- Completed Edge browser selftest at `35 / 35`; verified NetBox dialog at desktop and 390px viewport with no horizontal overflow and no console errors.
+- Completed cross-origin mock NetBox regression: remote reads, Prefix PATCH, IPAddress POST/PATCH, Bearer header, remote-ID persistence, and token non-persistence all passed.
