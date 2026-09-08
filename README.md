@@ -83,7 +83,7 @@ npx wrangler deploy
 5. 在页面「导入 NetBox」中填写：
    - NetBox 地址：`https://demo.netbox.dev`
    - Worker 代理地址：上一步得到的 Worker 地址
-   - 官方 Demo 账号创建的 API Token
+   - 官方 Demo 账号创建的 API Token；可填写裸 Token，也可直接粘贴完整的 `Bearer <token>` 或 `Token <token>` Authorization 值，认证方式会自动跟随完整值
 
 代理只允许配置的来源、HTTPS NetBox 域名和 `/api/` 路径，并且只转发 `GET`、`POST`、`PATCH`。Token 从浏览器内存经 `Authorization` 头转发，不会写入 Worker 配置、日志、URL、`localStorage` 或 JSON 备份。Worker 不是 Token 保管服务；不要把 Token 固定写进 Worker。
 
@@ -101,7 +101,7 @@ npx wrangler deploy
 
 ## 自测
 
-在地址栏后加 `?selftest` 打开自检页面（`index.html?selftest`），自动运行 37 条断言覆盖 CIDR 计算、CSV 解析、列映射、zip/xlsx 编解码、NetBox 映射与 Worker 请求配置等核心逻辑。
+在地址栏后加 `?selftest` 打开自检页面（`index.html?selftest`），自动运行 38 条断言覆盖 CIDR 计算、CSV 解析、列映射、zip/xlsx 编解码、NetBox 映射与 Worker 请求配置等核心逻辑。
 
 ## 技术说明
 

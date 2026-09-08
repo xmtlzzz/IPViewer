@@ -63,7 +63,7 @@ function targetUrl(request: Request, env: Env): URL | Response {
 function authHeader(request: Request): string | Response {
   const value = request.headers.get("Authorization") || "";
   if (!/^(Bearer|Token)\s+\S+$/i.test(value)) {
-    return json({ error: "A NetBox Authorization header is required" }, 401);
+    return json({ error: "Authorization header must use Bearer <token> or Token <token>" }, 401);
   }
   return value;
 }

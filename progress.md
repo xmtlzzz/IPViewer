@@ -23,3 +23,4 @@
 - Completed cross-origin mock NetBox regression: remote reads, Prefix PATCH, IPAddress POST/PATCH, Bearer header, remote-ID persistence, and token non-persistence all passed.
 - Added optional Cloudflare Worker proxy integration: exact page-origin and NetBox-origin allowlists, `/api/` path restriction, read/write method allowlist, CORS preflight, streamed upstream responses, and no Token persistence.
 - Added Worker deployment configuration and README instructions; local Worker security matrix passed and Edge selftest passed at `37 / 37`.
+- Fixed NetBox credential input handling so bare tokens and complete `Bearer`/`Token` Authorization values are normalized without duplicate schemes; deployed Worker version `64de4b69-bb40-46b9-85ba-349b765a4d1d`, and Edge selftest now passes at `38 / 38`.

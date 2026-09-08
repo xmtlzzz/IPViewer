@@ -2585,6 +2585,18 @@ NetBox.apiUrl = function (path) {
 NetBox.proxyUrl = function (target) {
   return NetBox.state.proxy + '?target=' + encodeURIComponent(target);
 };
+NetBox.parseToken = function (raw, preferredAuth) {
+  var value = String(raw || '').trim();
+  if (!value) throw NetBox.error('请输入 API Token');
+  var auth = preferredAuth === 'Token' ? 'Token' : 'Bearer';
+  var match = /^(Bearer|Token)\s+(.+)$/i.exec(value);
+  if (match) {
+    auth = /^token$/i.test(match[1]) ? 'Token' : 'Bearer';
+    value = match[2].trim();
+  }
+  if (!value || /\s/.test(value)) throw NetBox.error('API Token 格式不正确：请输入 Token，或粘贴完整的 Bearer/Token Authorization 值');
+  return { auth: auth, token: value };
+};
 NetBox.authHeader = function () {
   return NetBox.state.auth + ' ' + NetBox.state.token;
 };
@@ -2662,12 +2674,13 @@ NetBox.getConfig = function () {
   try {
     var base = NetBox.normalizeBase($('#nb-base').value);
     var proxy = NetBox.normalizeProxy($('#nb-proxy').value);
-    var token = $('#nb-token').value.trim();
-    if (!token) throw NetBox.error('请输入 API Token');
+    var auth = $('#nb-auth').value === 'Token' ? 'Token' : 'Bearer';
+    var tokenConfig = NetBox.parseToken($('#nb-token').value, auth);
     NetBox.state.base = base;
     NetBox.state.proxy = proxy;
-    NetBox.state.token = token;
-    NetBox.state.auth = $('#nb-auth').value === 'Token' ? 'Token' : 'Bearer';
+    NetBox.state.token = tokenConfig.token;
+    NetBox.state.auth = tokenConfig.auth;
+    $('#nb-auth').value = tokenConfig.auth;
     NetBox.state.conflictMode = $('#nb-conflict').value === 'deprecated' ? 'deprecated' : 'skip';
     return true;
   } catch (e) {
@@ -2702,7 +2715,7 @@ NetBox.renderConfig = function () {
     + '<div class="nb-config-grid">'
     + '<div class="fld"><label for="nb-base">NetBox 地址</label><input id="nb-base" type="url" placeholder="https://netbox.example.com" value="' + esc(s.base) + '"></div>'
     + '<div class="fld"><label for="nb-proxy">Worker 代理地址（可选）</label><input id="nb-proxy" type="url" placeholder="https://ipviewer-netbox-proxy.example.workers.dev" value="' + esc(s.proxy) + '"><div class="nb-token-note">官方 Demo 未开放浏览器 CORS 时填写；留空则直连 NetBox。代理只转发请求，不保存 Token。</div></div>'
-    + '<div class="fld"><label for="nb-token">API Token</label><input id="nb-token" type="password" autocomplete="off" placeholder="nbt_…" value="' + esc(s.token) + '"><div class="nb-token-note">Token 仅保存在当前页面内存，不会写入本地备份或 localStorage。</div></div>'
+    + '<div class="fld"><label for="nb-token">API Token</label><input id="nb-token" type="password" autocomplete="off" placeholder="nbt_… 或 Bearer nbt_…" value="' + esc(s.token) + '"><div class="nb-token-note">可填写裸 Token，也可粘贴完整的 Bearer/Token Authorization 值；Token 仅保存在当前页面内存。</div></div>'
     + '<div class="fld"><label for="nb-auth">认证方式</label><select id="nb-auth"><option value="Bearer"' + (s.auth === 'Bearer' ? ' selected' : '') + '>Bearer（NetBox v2）</option><option value="Token"' + (s.auth === 'Token' ? ' selected' : '') + '>Token（旧版兼容）</option></select></div>'
     + '<div class="fld"><label for="nb-conflict">冲突地址策略</label><select id="nb-conflict"><option value="skip"' + (s.conflictMode === 'skip' ? ' selected' : '') + '>跳过并在报告中列出</option><option value="deprecated"' + (s.conflictMode === 'deprecated' ? ' selected' : '') + '>明确标为 deprecated</option></select></div>'
     + '</div><div id="nb-status" class="nb-status"></div>';
@@ -3302,6 +3315,20 @@ function runSelftest() {
     eq(url.indexOf('token') < 0, true);
     eq(url.indexOf(encodeURIComponent('https://demo.netbox.dev/api/')) >= 0, true);
     NetBox.state.proxy = '';
+  });
+  t('NetBox Token 格式归一化', function () {
+    var bearer = NetBox.parseToken('sample-value', 'Bearer');
+    eq(bearer.auth, 'Bearer');
+    eq(bearer.token, 'sample-value');
+    var fullBearer = NetBox.parseToken('Bearer sample-value', 'Token');
+    eq(fullBearer.auth, 'Bearer');
+    eq(fullBearer.token, 'sample-value');
+    var fullToken = NetBox.parseToken('Token sample-value', 'Bearer');
+    eq(fullToken.auth, 'Token');
+    eq(fullToken.token, 'sample-value');
+    var rejected = false;
+    try { NetBox.parseToken('sample value', 'Bearer'); } catch (e) { rejected = true; }
+    eq(rejected, true);
   });
   t('NetBox 映射计划', function () {
     var oldState = Store.state;
