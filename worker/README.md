@@ -15,7 +15,7 @@
 }
 ```
 
-`ALLOWED_ORIGINS` 必须是 IPViewer 页面实际的完整来源，包含协议，不要填写路径结尾的 `/`。本地 HTTP 服务可以配置为：
+`ALLOWED_ORIGINS` 必须是 IPViewer 页面实际的完整来源，包含协议，不要填写路径。Worker 会自动忽略配置值末尾多余的 `/`。本地 HTTP 服务可以配置为：
 
 ```jsonc
 "ALLOWED_ORIGINS": "http://localhost:8000,http://127.0.0.1:8000"

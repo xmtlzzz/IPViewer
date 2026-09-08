@@ -25,7 +25,7 @@ function configuredList(value: string | undefined): Set<string> {
   return new Set(
     (value || "")
       .split(",")
-      .map((item) => item.trim())
+      .map((item) => item.trim().replace(/\/+$/, ""))
       .filter(Boolean),
   );
 }
