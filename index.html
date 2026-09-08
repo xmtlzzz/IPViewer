@@ -1,0 +1,2862 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 单文件全内联：禁止一切外部资源加载/远程代码（file:// 下 connect-src * 允许剪贴板等本地 API） -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src file: blob: data:; base-uri 'none'; form-action 'none'">
+<title>IPViewer — 离线 IP 地址池登记</title>
+<style>
+/* ============================================================
+   IPViewer 单文件样式 — CSS 变量主题驱动
+   ============================================================ */
+:root {
+  --bg:#f3f4f6; --panel:#ffffff; --panel2:#f9fafb; --border:#e2e5ea;
+  --text:#1f2430; --muted:#6b7280; --accent:#2563eb; --accent-soft:#dbeafe;
+  --st-assigned:#22c55e; --st-assigned-t:#052e16;
+  --st-free:#e5e7eb;     --st-free-t:#374151;
+  --st-reserved:#3b82f6; --st-reserved-t:#eff6ff;
+  --st-conflict:#ef4444; --st-conflict-t:#7f1d1d;
+  --st-net:#d1d5db;      --st-net-t:#6b7280;
+  --st-hit:#f59e0b;
+  --cols:32; --cell-font:12px;
+  --radius:8px; --shadow:0 1px 3px rgba(0,0,0,.08),0 4px 12px rgba(0,0,0,.05);
+}
+[data-theme="dark"] {
+  --bg:#111318; --panel:#1b1e26; --panel2:#22262f; --border:#31363f;
+  --text:#e5e7eb; --muted:#9ca3af; --accent:#60a5fa; --accent-soft:#1e3a5f;
+  --st-assigned:#16a34a; --st-assigned-t:#d1fae5;
+  --st-free:#2b303a;     --st-free-t:#9ca3af;
+  --st-reserved:#2563eb; --st-reserved-t:#dbeafe;
+  --st-conflict:#dc2626; --st-conflict-t:#fee2e2;
+  --st-net:#374151;      --st-net-t:#9ca3af;
+  --st-hit:#d97706;
+  --shadow:0 1px 3px rgba(0,0,0,.4),0 4px 12px rgba(0,0,0,.3);
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+html,body { height:100%; }
+body {
+  font:14px/1.5 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  background:var(--bg); color:var(--text);
+  display:flex; flex-direction:column; min-width:0;
+}
+button { font:inherit; cursor:pointer; color:inherit; }
+input,select,textarea { font:inherit; color:var(--text); }
+
+/* ---------- header ---------- */
+header {
+  display:flex; align-items:center; gap:12px; padding:8px 16px;
+  background:var(--panel); border-bottom:1px solid var(--border);
+  position:sticky; top:0; z-index:30;
+}
+.brand { font-weight:700; font-size:16px; letter-spacing:.5px; white-space:nowrap; }
+.brand small { color:var(--muted); font-weight:400; margin-left:6px; }
+#search {
+  flex:1; max-width:420px; padding:6px 12px; border:1px solid var(--border);
+  border-radius:var(--radius); background:var(--panel2); outline:none;
+  transition:border-color .15s ease, box-shadow .15s ease;
+}
+#search:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+header .spacer { flex:1; }
+.hbtn {
+  padding:5px 12px; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--panel2); white-space:nowrap;
+  transition:border-color .15s ease, color .15s ease, background .15s ease;
+}
+.hbtn:hover { border-color:var(--accent); color:var(--accent); }
+.hbtn:active { transform:translateY(1px); }
+.hbtn.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+
+/* ---------- layout ---------- */
+main { flex:1; display:flex; min-height:0; }
+#sidebar {
+  width:260px; min-width:260px; background:var(--panel);
+  border-right:1px solid var(--border); display:flex; flex-direction:column;
+}
+.side-head {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:10px 12px; font-weight:600; border-bottom:1px solid var(--border);
+}
+.side-head .hbtn { padding:3px 10px; font-size:12px; }
+#subnet-list { flex:1; overflow-y:auto; padding:8px; }
+.snt-card {
+  padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius);
+  margin-bottom:6px; cursor:pointer; background:var(--panel2); position:relative;
+  transition:border-color .15s ease, background .15s ease, transform .12s ease;
+}
+.snt-card:hover { border-color:var(--accent); }
+.snt-card:active { transform:scale(.985); }
+.snt-card.active { border-color:var(--accent); background:var(--accent-soft); }
+.snt-card .nm { font-weight:600; display:flex; justify-content:space-between; align-items:center; }
+.snt-card .nm .ops { display:none; gap:4px; }
+.snt-card:hover .nm .ops { display:inline-flex; }
+.snt-card .nm .ops button { border:none; background:none; color:var(--muted); padding:0 3px; font-size:12px; }
+.snt-card .nm .ops button:hover { color:var(--accent); }
+.snt-card .cidr { font-family:Consolas,monospace; font-size:12px; color:var(--muted); margin:2px 0 6px; }
+.util-bar { height:5px; border-radius:3px; background:var(--st-free); overflow:hidden; }
+.util-bar i { display:block; height:100%; background:var(--st-assigned); transition:width .35s ease; }
+.util-txt { font-size:11px; color:var(--muted); margin-top:2px; }
+#content { flex:1; display:flex; flex-direction:column; min-width:0; overflow:auto; }
+
+/* ---------- toolbar / stats ---------- */
+#toolbar {
+  display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  padding:8px 16px; background:var(--panel); border-bottom:1px solid var(--border);
+}
+#toolbar label { font-size:12px; color:var(--muted); }
+#toolbar select {
+  padding:3px 8px; border:1px solid var(--border); border-radius:6px; background:var(--panel2);
+}
+.legend { display:flex; gap:10px; margin-left:auto; flex-wrap:wrap; }
+.chip { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--muted); cursor:pointer; border:none; background:none; padding:2px 4px; border-radius:6px; transition:background .15s ease, color .15s ease; }
+.chip:hover { color:var(--text); }
+.chip i { width:12px; height:12px; border-radius:3px; display:inline-block; }
+.chip.on { background:var(--accent-soft); color:var(--accent); }
+#stats {
+  display:flex; gap:18px; flex-wrap:wrap; padding:8px 16px;
+  font-size:12.5px; color:var(--muted); background:var(--panel2);
+  border-bottom:1px solid var(--border);
+}
+#stats b { color:var(--text); font-size:13px; }
+#stats .warn { color:var(--st-conflict); }
+
+/* ---------- grid ---------- */
+#grid-wrap { padding:16px; }
+#grid {
+  display:grid; gap:3px;
+  grid-template-columns:repeat(var(--cols),minmax(0,1fr));
+}
+.cell {
+  aspect-ratio:1/1; border:none; border-radius:4px;
+  background:var(--st-free); color:var(--st-free-t);
+  font-size:var(--cell-font); font-weight:600; font-family:Consolas,monospace;
+  display:flex; align-items:center; justify-content:center;
+  position:relative; user-select:none; padding:0; min-width:0;
+  transition:box-shadow .12s ease, opacity .15s ease, transform .08s ease;
+}
+.cell:hover { outline:2px solid var(--accent); outline-offset:-2px; z-index:2; }
+.cell:active { transform:scale(.93); }
+.cell.st-assigned { background:var(--st-assigned); color:var(--st-assigned-t); }
+.cell.st-reserved { background:var(--st-reserved); color:var(--st-reserved-t); }
+.cell.st-conflict { background:var(--st-conflict); color:#fff; }
+.cell.st-free     { background:var(--st-free);     color:var(--st-free-t); }
+.cell.st-network, .cell.st-broadcast {
+  background:repeating-linear-gradient(45deg,var(--st-net) 0 4px,transparent 4px 8px);
+  color:var(--st-net-t); font-weight:400;
+}
+.cell.sel { outline:2.5px solid var(--text); outline-offset:-2px; z-index:3; }
+.cell.multi { outline:2px solid var(--accent); outline-offset:-2px; z-index:2; }
+.cell.dim { opacity:.18; }
+.cell.hit { box-shadow:0 0 0 2.5px var(--st-hit) inset; }
+
+/* 右键状态菜单 */
+#ctx-menu {
+  position:fixed; z-index:70; min-width:130px; padding:4px;
+  background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+  box-shadow:var(--shadow); display:none;
+}
+#ctx-menu.open { display:block; }
+#ctx-menu button {
+  display:flex; align-items:center; gap:7px; width:100%; padding:6px 10px;
+  border:none; background:none; border-radius:6px; font-size:13px; text-align:left;
+}
+#ctx-menu button:hover { background:var(--accent-soft); }
+#ctx-menu button i { width:10px; height:10px; border-radius:3px; }
+#ctx-menu .ctx-head {
+  padding:4px 10px 6px; font-size:11px; color:var(--muted);
+  border-bottom:1px solid var(--border); margin-bottom:3px;
+  font-family:Consolas,monospace; white-space:nowrap; max-width:200px;
+  overflow:hidden; text-overflow:ellipsis;
+}
+/* 批量操作浮条 */
+#batch-bar {
+  position:fixed; bottom:56px; left:50%; transform:translateX(-50%);
+  z-index:65; display:none; align-items:center; gap:10px;
+  background:var(--panel); border:1px solid var(--border); border-radius:24px;
+  box-shadow:var(--shadow); padding:8px 10px 8px 18px;
+}
+#batch-bar.open { display:flex; }
+#batch-bar .cnt { font-size:13px; font-weight:600; }
+#batch-bar .seg { border:none; }
+#batch-bar .btn { padding:5px 12px; font-size:12.5px; }
+.gsep {
+  grid-column:1/-1; font-size:12px; color:var(--muted);
+  font-family:Consolas,monospace; padding:6px 2px 2px; border-bottom:1px dashed var(--border);
+}
+#grid-note { padding:10px 16px; color:var(--muted); font-size:13px; }
+
+/* ---------- welcome ---------- */
+#welcome { margin:auto; text-align:center; color:var(--muted); padding:60px 20px; }
+#welcome h2 { color:var(--text); margin-bottom:10px; }
+#welcome .tip { font-size:13px; margin-top:14px; line-height:2; }
+
+/* ---------- detail panel ---------- */
+#panel-mask {
+  position:fixed; inset:0; background:rgba(0,0,0,.25); z-index:40;
+  opacity:0; pointer-events:none; transition:opacity .22s ease;
+}
+#panel-mask.open { opacity:1; pointer-events:auto; }
+#panel {
+  position:fixed; top:0; right:-400px; width:380px; max-width:92vw; height:100%;
+  background:var(--panel); border-left:1px solid var(--border); z-index:41;
+  transition:right .26s cubic-bezier(.32,.72,.34,1); display:flex; flex-direction:column;
+  box-shadow:var(--shadow);
+}
+#panel.open { right:0; }
+.panel-head {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:12px 16px; border-bottom:1px solid var(--border);
+}
+.panel-head .ip { font-family:Consolas,monospace; font-size:16px; font-weight:700; }
+.panel-head .close { border:none; background:none; font-size:18px; color:var(--muted); }
+.panel-body { flex:1; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:12px; }
+.seg { display:flex; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+.seg button { flex:1; padding:7px 0; border:none; background:var(--panel2); font-size:13px; transition:background .15s ease, color .15s ease; }
+.seg button:hover:not(.on) { background:var(--accent-soft); }
+.seg button.on { background:var(--accent); color:#fff; font-weight:600; }
+.fld label { display:block; font-size:12px; color:var(--muted); margin-bottom:3px; }
+.fld input,.fld select,.fld textarea {
+  width:100%; padding:6px 10px; border:1px solid var(--border);
+  border-radius:var(--radius); background:var(--panel2); outline:none;
+  transition:border-color .15s ease, box-shadow .15s ease;
+}
+.fld input:focus,.fld textarea:focus,.fld select:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.fld .soft-warn { color:var(--st-conflict); font-size:11.5px; margin-top:2px; display:none; }
+.fld.invalid .soft-warn { display:block; }
+.fld.invalid input { border-color:var(--st-conflict); }
+.panel-foot {
+  display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--border);
+}
+.panel-foot .danger { color:var(--st-conflict); border-color:var(--st-conflict); margin-left:auto; background:none; }
+.btn {
+  padding:7px 16px; border:1px solid var(--border); border-radius:var(--radius); background:var(--panel2);
+  transition:border-color .15s ease, background .15s ease, filter .15s ease;
+}
+.btn:active { transform:translateY(1px); }
+.btn.primary:hover { filter:brightness(1.08); }
+.btn.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+.btn.danger { color:var(--st-conflict); border-color:var(--st-conflict); background:none; }
+.role-badge {
+  font-size:11px; padding:1px 8px; border-radius:10px; background:var(--st-net);
+  color:var(--st-net-t); vertical-align:middle; margin-left:8px;
+}
+
+/* ---------- dialog ---------- */
+dialog {
+  border:1px solid var(--border); border-radius:12px; padding:0;
+  background:var(--panel); color:var(--text); min-width:420px; max-width:720px;
+  box-shadow:var(--shadow);
+  margin:auto; /* 全局 * 重置清掉了 UA 的 margin:auto 居中，这里补回 */
+}
+dialog::backdrop { background:rgba(0,0,0,.35); }
+.dlg-head { padding:14px 18px; font-weight:700; border-bottom:1px solid var(--border); }
+.dlg-body { padding:16px 18px; font-size:14px; line-height:1.7; }
+.dlg-foot { padding:12px 18px; display:flex; gap:8px; justify-content:flex-end; border-top:1px solid var(--border); }
+
+/* ---------- import wizard ---------- */
+#wiz { width:680px; max-width:94vw; }
+#rules { width:620px; max-width:94vw; }
+#wiz .steps { display:flex; gap:6px; margin-bottom:14px; }
+#wiz .steps span { font-size:12px; padding:2px 10px; border-radius:10px; background:var(--panel2); color:var(--muted); }
+#wiz .steps span.on { background:var(--accent); color:#fff; }
+#wiz table.preview { border-collapse:collapse; width:100%; font-size:12px; margin:8px 0; }
+#wiz table.preview td,#wiz table.preview th {
+  border:1px solid var(--border); padding:3px 8px; text-align:left; white-space:nowrap;
+  max-width:160px; overflow:hidden; text-overflow:ellipsis;
+}
+#wiz table.preview th { background:var(--panel2); }
+.map-row { display:grid; grid-template-columns:110px 1fr; gap:8px; align-items:center; margin-bottom:8px; }
+.map-row label { font-size:13px; }
+.map-row select { width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:6px; background:var(--panel2); }
+.map-grid { display:grid; grid-template-columns:1fr 1fr; gap:4px 18px; }
+#wiz .hint { font-size:12px; color:var(--muted); margin:6px 0; }
+#wiz .err { color:var(--st-conflict); font-size:12.5px; margin-top:8px; white-space:pre-wrap; }
+.kw-row { display:grid; grid-template-columns:1fr 110px 28px; gap:6px; align-items:center; margin-bottom:5px; }
+.kw-row .kw-pat { padding:4px 8px; border:1px solid var(--border); border-radius:6px; background:var(--panel2); font-family:Consolas,monospace; font-size:12px; }
+.kw-row .kw-st { padding:4px 6px; border:1px solid var(--border); border-radius:6px; background:var(--panel2); }
+.kw-row .kw-del { border:none; background:none; color:var(--muted); font-size:13px; }
+.kw-row .kw-del:hover { color:var(--st-conflict); }
+
+/* ---------- toasts ---------- */
+#toasts { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:60; display:flex; flex-direction:column; gap:8px; align-items:center; pointer-events:none; }
+.toast {
+  background:var(--text); color:var(--bg); padding:8px 18px; border-radius:20px;
+  font-size:13px; box-shadow:var(--shadow); animation:fadein .22s ease;
+  max-width:80vw; pointer-events:auto;
+  transition:opacity .25s ease, transform .25s ease;
+}
+.toast.err { background:var(--st-conflict); color:#fff; }
+.toast button { color:inherit; background:none; border:none; text-decoration:underline; margin-left:6px; }
+@keyframes fadein { from { opacity:0; transform:translateY(8px);} }
+@keyframes fadeout { to { opacity:0; transform:translateY(6px);} }
+
+/* ---------- UI consistency pass ---------- */
+:root {
+  --control-h:34px;
+  --control-radius:6px;
+  --surface-popover:var(--panel);
+  --shadow-popover:0 10px 24px rgba(15,23,42,.14);
+  --shadow-dialog:0 18px 48px rgba(15,23,42,.22);
+}
+[data-theme="dark"] {
+  --shadow-popover:0 10px 24px rgba(0,0,0,.34);
+  --shadow-dialog:0 18px 48px rgba(0,0,0,.46);
+}
+button:focus:not(:focus-visible) { outline:none; }
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline:2px solid var(--accent);
+  outline-offset:2px;
+}
+.hbtn, .btn {
+  min-height:var(--control-h);
+  padding:0 12px;
+  border-radius:var(--control-radius);
+  font-size:13px;
+  line-height:1;
+}
+.hbtn { background:var(--panel2); }
+.btn { background:var(--panel2); }
+.hbtn:disabled, .btn:disabled { opacity:.5; cursor:not-allowed; }
+#toolbar select,
+.map-row select,
+.fld input, .fld select, .fld textarea,
+.kw-row .kw-pat, .kw-row .kw-st {
+  min-height:var(--control-h);
+  border-radius:var(--control-radius);
+}
+.fld textarea { min-height:78px; resize:vertical; }
+
+/* Keep every modal in the same shell, regardless of its content. */
+dialog {
+  width:min(520px, calc(100vw - 32px));
+  min-width:0;
+  max-height:calc(100vh - 32px);
+  border:0;
+  border-radius:10px;
+  box-shadow:var(--shadow-dialog);
+  overflow:hidden;
+  outline:none;
+}
+dialog:focus { outline:none; }
+dialog::backdrop { background:rgba(15,23,42,.42); }
+.dlg-head {
+  min-height:54px;
+  display:flex;
+  align-items:center;
+  padding:14px 18px;
+  font-size:14px;
+  letter-spacing:0;
+}
+.dlg-body {
+  max-height:calc(100vh - 164px);
+  overflow:auto;
+  padding:18px;
+}
+.dlg-foot {
+  min-height:58px;
+  align-items:center;
+  padding:10px 18px;
+  background:var(--panel2);
+}
+#dlg, #confirm { width:min(520px, calc(100vw - 32px)); }
+#wiz { width:min(720px, calc(100vw - 32px)); }
+#rules { width:min(640px, calc(100vw - 32px)); }
+
+/* Shared popovers and transient surfaces. */
+#ctx-menu, .export-menu {
+  background:var(--surface-popover);
+  border:0;
+  border-radius:8px;
+  box-shadow:var(--shadow-popover);
+}
+#ctx-menu { padding:5px; }
+#ctx-menu button { min-height:32px; border-radius:5px; }
+#ctx-menu .ctx-head { padding:5px 9px 7px; }
+.export-menu {
+  position:fixed;
+  z-index:70;
+  min-width:176px;
+  padding:5px;
+}
+.export-menu-item {
+  display:block;
+  width:100%;
+  min-height:34px;
+  padding:0 11px;
+  border:0;
+  border-radius:5px;
+  background:none;
+  text-align:left;
+  font-size:13px;
+}
+.export-menu-item:hover { background:var(--accent-soft); color:var(--accent); }
+#batch-bar {
+  gap:8px;
+  padding:8px 10px 8px 14px;
+  border:0;
+  border-radius:10px;
+  box-shadow:var(--shadow-popover);
+}
+#batch-bar .seg { border:1px solid var(--border); border-radius:var(--control-radius); }
+#batch-bar .seg button { min-height:30px; }
+.seg button { min-height:var(--control-h); }
+
+/* Import mapping and status rules use the same row rhythm. */
+#wiz .steps { gap:8px; margin-bottom:16px; }
+#wiz .steps span {
+  min-height:26px;
+  display:inline-flex;
+  align-items:center;
+  padding:0 10px;
+  border-radius:13px;
+}
+#wiz table.preview {
+  display:block;
+  max-width:100%;
+  overflow:auto;
+  border:1px solid var(--border);
+  border-radius:var(--control-radius);
+}
+#wiz table.preview td, #wiz table.preview th { height:32px; padding:6px 9px; }
+#wiz table.preview th { position:sticky; top:0; z-index:1; }
+.hint { font-size:12px; color:var(--muted); }
+.map-grid { gap:8px 22px; }
+.map-row { grid-template-columns:112px minmax(0,1fr); gap:10px; margin-bottom:10px; }
+.map-row label { line-height:1.35; }
+.map-row select { padding:0 9px; }
+#wiz .hint, .rules-hint { line-height:1.55; }
+.rules-disclosure { margin-top:14px !important; border-top:1px solid var(--border); padding-top:12px; }
+.rules-disclosure summary { color:var(--text) !important; font-weight:600; }
+[data-rules-editor] { margin-top:0 !important; }
+.kw-row {
+  grid-template-columns:minmax(0,1fr) 132px 34px;
+  gap:8px;
+  margin-bottom:8px;
+}
+.kw-row .kw-pat, .kw-row .kw-st { width:100%; padding:0 9px; }
+.kw-row .kw-del {
+  width:34px;
+  min-height:var(--control-h);
+  border:1px solid var(--border);
+  border-radius:var(--control-radius);
+  background:var(--panel2);
+  transition:border-color .15s ease, color .15s ease, background .15s ease;
+}
+.kw-row .kw-del:hover { border-color:var(--st-conflict); background:color-mix(in srgb, var(--st-conflict) 10%, var(--panel)); }
+.rules-actions {
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:10px !important;
+}
+.rules-actions .btn { min-height:32px; padding:0 11px; }
+.rules-hint { margin-top:10px !important; }
+.side-head-tools { display:flex; align-items:center; gap:4px; }
+.side-sort {
+  min-height:30px;
+  padding:0 6px;
+  border:1px solid var(--border);
+  border-radius:var(--control-radius);
+  background:var(--panel2);
+  color:var(--muted);
+  font-size:11.5px;
+}
+.empty-state {
+  padding:20px 10px;
+  color:var(--muted);
+  font-size:12.5px;
+  text-align:center;
+}
+.dlg-form-stack .fld + .fld { margin-top:10px; }
+.dlg-error {
+  display:none;
+  margin-top:10px;
+  color:var(--st-conflict);
+  font-size:12.5px;
+}
+.dlg-error:not(:empty) { display:block; }
+.dialog-hint { margin-top:6px; font-size:12px; color:var(--muted); }
+.sheet-option { font-size:13px; }
+.map-row.subnet-target { margin-top:10px; }
+.import-report-label { margin-bottom:6px; font-size:12px; color:var(--muted); }
+.import-report {
+  max-height:200px;
+  overflow:auto;
+  margin:0;
+  padding:8px;
+  border-radius:var(--control-radius);
+  background:var(--panel2);
+  font-size:12px;
+  white-space:pre-wrap;
+  user-select:all;
+}
+.rules-message { align-self:center; font-size:12px; color:var(--muted); }
+
+@media (max-width:900px) {
+  body { min-width:0; }
+  header { flex-wrap:wrap; padding:8px 12px; gap:8px; }
+  header .spacer { display:none; }
+  #search { order:3; flex-basis:100%; max-width:none; }
+  header .hbtn { flex:1 1 auto; }
+  #sidebar { width:220px; min-width:220px; }
+  #toolbar { padding:8px 12px; }
+  #stats { padding:8px 12px; gap:12px; }
+  #grid-wrap { overflow-x:auto; }
+  #grid { min-width:900px; }
+}
+@media (max-width:720px) {
+  main { display:block; overflow:auto; }
+  #sidebar { width:100%; min-width:0; max-height:220px; border-right:0; border-bottom:1px solid var(--border); }
+  #subnet-list { display:flex; gap:8px; overflow-x:auto; padding:8px 10px; }
+  .snt-card { min-width:210px; margin-bottom:0; }
+  #content { min-height:calc(100vh - 280px); overflow:visible; }
+  #grid-wrap { padding:10px; overflow-x:auto; }
+  .legend { margin-left:0; }
+  .map-grid { grid-template-columns:1fr; }
+  .kw-row { grid-template-columns:minmax(0,1fr) 112px 34px; }
+  #panel { width:100%; max-width:100%; }
+  #batch-bar { left:8px; right:8px; bottom:52px; transform:none; max-width:none; overflow-x:auto; }
+  footer { gap:8px; padding:5px 10px; flex-wrap:wrap; }
+  footer .spacer { display:none; }
+}
+
+/* ---------- footer ---------- */
+footer {
+  display:flex; gap:16px; align-items:center; padding:5px 16px;
+  font-size:12px; color:var(--muted);
+  background:var(--panel); border-top:1px solid var(--border);
+}
+footer .warn { color:#b45309; font-weight:600; }
+footer .spacer { flex:1; }
+footer button { border:none; background:none; color:var(--accent); font-size:12px; text-decoration:underline; }
+
+/* ---------- selftest ---------- */
+#selftest { padding:20px; font-family:Consolas,monospace; font-size:13px; }
+#selftest .pass { color:#16a34a; }
+#selftest .fail { color:#ef4444; }
+#selftest h3 { margin:14px 0 6px; font-family:inherit; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration:.01ms !important; animation-duration:.01ms !important; }
+}
+@media print {
+  header,#sidebar,#toolbar,#panel,#panel-mask,footer,#toasts,dialog { display:none !important; }
+  body { min-width:0; }
+  #content { overflow:visible; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">IPViewer<small>离线 IP 登记</small></div>
+  <input id="search" type="search" placeholder="搜索 IP / 设备名 / 用途 / 备注…" data-action-Enter="search-enter">
+  <div class="spacer"></div>
+  <button class="hbtn" id="import-table" data-action="import-table" title="导入 Excel/CSV 登记表">导入表格</button>
+  <button class="hbtn" data-action="export-table" title="导出为 Excel/CSV">导出表格</button>
+  <button class="hbtn" data-action="import-json" title="导入 JSON 备份">导入备份</button>
+  <button class="hbtn" data-action="export-json" title="导出 JSON 全量备份">导出备份</button>
+  <button class="hbtn" data-action="status-rules" title="编辑导入状态关键词规则">状态规则</button>
+  <button class="hbtn" data-action="toggle-theme" title="切换亮/暗主题">🌓</button>
+</header>
+
+<main>
+  <aside id="sidebar">
+    <div class="side-head">网段列表 <span class="side-head-tools">
+      <select id="subnet-sort" class="side-sort">
+        <option value="created">默认</option>
+        <option value="name">按名称</option>
+        <option value="cidr">按网段</option>
+        <option value="util">按利用率</option>
+      </select>
+      <button class="hbtn" data-action="add-subnet">＋ 新增</button></span></div>
+    <div id="subnet-list"></div>
+  </aside>
+  <section id="content">
+    <div id="toolbar" hidden>
+      <label>密度 <select id="density">
+        <option value="16">宽松 (16列)</option>
+        <option value="32" selected>密集 (32列)</option>
+        <option value="64">超密 (64列)</option>
+      </select></label>
+      <label>字号 <select id="fontscale">
+        <option value="10">小</option>
+        <option value="12" selected>中</option>
+        <option value="14">大</option>
+      </select></label>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div id="stats" hidden></div>
+    <div id="grid-wrap"><div id="grid"></div><div id="grid-note" hidden></div></div>
+    <div id="welcome">
+      <h2>欢迎使用 IPViewer</h2>
+      <div>左侧「＋ 新增」创建第一个网段（如 192.168.10.0/24）开始登记。</div>
+      <div class="tip">
+        点击格子 → 登记设备信息（名称 / 主机名 / 管理IP / 接口 / MAC / 用途）<br>
+        数据保存在本机浏览器，请定期「导出备份」为 JSON 文件<br>
+        支持 Excel / CSV 导入导出，首次导入可配置列映射
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="panel-mask" data-action="close-panel"></div>
+<aside id="panel">
+  <div class="panel-head">
+    <div><span class="ip" id="p-ip"></span><span class="role-badge" id="p-role" hidden></span></div>
+    <button class="close" data-action="close-panel" title="关闭 (Esc)">✕</button>
+  </div>
+  <div class="panel-body">
+    <div class="fld"><label>状态（点击即保存）</label>
+      <div class="seg" id="p-status">
+        <button data-st="assigned">已分配</button>
+        <button data-st="free">空闲</button>
+        <button data-st="reserved">预留</button>
+        <button data-st="conflict">冲突</button>
+      </div>
+    </div>
+    <div class="fld"><label>设备名称</label><input id="p-name" placeholder="如：核心交换机-1F"></div>
+    <div class="fld"><label>主机名（Hostname）</label><input id="p-hostname" placeholder="如：core-sw-01"></div>
+    <div class="fld" id="f-mgmt"><label>管理 IP（设备其他接口地址，可空）</label><input id="p-mgmt" placeholder="如：10.0.0.1"><div class="soft-warn">IP 格式不正确（仅提示，不影响保存）</div></div>
+    <div class="fld"><label>使用接口</label><input id="p-iface" placeholder="如：Vlanif4 / Gi0/1"></div>
+    <div class="fld" id="f-mac"><label>MAC 地址</label><input id="p-mac" placeholder="如：AA-BB-CC-DD-EE-FF"><div class="soft-warn">MAC 格式不正确（仅提示，不影响保存）</div></div>
+    <div class="fld"><label>用途</label><input id="p-purpose" placeholder="如：网关 / 办公位 / 监控"></div>
+    <div class="fld"><label>设备类型</label>
+      <select id="p-devtype">
+        <option value="">（未设置）</option>
+        <option value="switch">交换机</option>
+        <option value="router">路由器</option>
+        <option value="server">服务器</option>
+        <option value="ap">无线 AP</option>
+        <option value="camera">摄像头</option>
+        <option value="printer">打印机</option>
+        <option value="pc">终端 PC</option>
+        <option value="other">其他</option>
+      </select>
+    </div>
+    <div class="fld"><label>备注</label><textarea id="p-note" rows="3"></textarea></div>
+  </div>
+  <div class="panel-foot">
+    <button class="btn primary" data-action="panel-save">保存</button>
+    <button class="btn" data-action="panel-prev" title="上一个 IP">←</button>
+    <button class="btn" data-action="panel-next" title="下一个 IP">→</button>
+    <button class="btn danger" data-action="panel-clear">清除登记</button>
+  </div>
+</aside>
+
+<dialog id="dlg">
+  <div class="dlg-head" id="dlg-title"></div>
+  <div class="dlg-body" id="dlg-body"></div>
+  <div class="dlg-foot" id="dlg-foot"></div>
+</dialog>
+
+<dialog id="confirm">
+  <div class="dlg-head" id="cf-title"></div>
+  <div class="dlg-body" id="cf-body"></div>
+  <div class="dlg-foot" id="cf-foot"></div>
+</dialog>
+
+<dialog id="rules">
+  <div class="dlg-head">状态映射规则</div>
+  <div class="dlg-body" id="rules-body"></div>
+  <div class="dlg-foot" id="rules-foot"></div>
+</dialog>
+
+<dialog id="wiz">
+  <div class="dlg-head">导入登记表</div>
+  <div class="dlg-body">
+    <div class="steps" id="w-steps"></div>
+    <div id="w-body"></div>
+    <div class="err" id="w-err"></div>
+  </div>
+  <div class="dlg-foot" id="w-foot"></div>
+</dialog>
+
+<div id="toasts"></div>
+<div id="ctx-menu"></div>
+<div id="batch-bar">
+  <span class="cnt">已选 <b id="batch-n">0</b> 格</span>
+  <div class="seg" id="batch-status">
+    <button data-st="assigned">已分配</button>
+    <button data-st="free">空闲</button>
+    <button data-st="reserved">预留</button>
+    <button data-st="conflict">冲突</button>
+  </div>
+  <button class="btn" id="batch-cancel">取消</button>
+</div>
+
+<footer>
+  <span id="ft-count"></span>
+  <span id="ft-size"></span>
+  <span id="ft-backup"></span>
+  <span class="spacer"></span>
+  <button data-action="restore-backup" id="ft-restore" hidden>恢复上次导入前备份</button>
+  <span>v1.0 · 数据仅存本机浏览器，请定期导出备份</span>
+</footer>
+
+<script>
+(function () {
+'use strict';
+
+/* ============================================================
+ * [1] 常量与配置
+ * ============================================================ */
+var SCHEMA_VERSION = 1;
+var APP = 'IPViewer';
+var LS = {
+  data:     'ipviewer.data.v1',
+  settings: 'ipviewer.settings.v1',
+  colmap:   'ipviewer.colmap.v1',
+  backup:   'ipviewer.backup.v1',
+  keywords: 'ipviewer.keywords.v1'
+};
+var RENDER_LIMIT = 4096;              // /20 —— 格子图渲染硬上限
+var STATUS_LABEL = {
+  assigned: '已分配', free: '空闲', reserved: '预留', conflict: '冲突',
+  network: '网络地址', broadcast: '广播地址'
+};
+var STATUS_ORDER = ['assigned', 'free', 'reserved', 'conflict'];
+var DEVTYPE_LABEL = {
+  '': '（未设置）', switch: '交换机', router: '路由器', server: '服务器',
+  ap: '无线 AP', camera: '摄像头', printer: '打印机', pc: '终端 PC', other: '其他'
+};
+var FIELDS = ['name', 'hostname', 'mgmtIp', 'iface', 'mac', 'purpose', 'deviceType', 'note'];
+var IMPORT_TARGETS = [
+  ['ip',       'IP 地址 *'],
+  ['name',     '设备名称'],
+  ['hostname', '主机名 / 域名'],
+  ['mgmtIp',   '管理 IP'],
+  ['iface',    '使用接口'],
+  ['mac',      'MAC 地址'],
+  ['purpose',  '用途'],
+  ['deviceType','设备类型'],
+  ['note',     '备注'],
+  ['status',   '状态'],
+  ['subnet',   '所属网段(CIDR)'],
+  ['_ignore',  '（忽略此列）'],
+  ['_note',    '（并入备注）']
+];
+// 状态值归一关键词（默认规则；用户自定义规则见 Data.loadKeywords，持久化于 LS.keywords）
+var STATUS_KEYWORDS = [
+  [/分配|在用|使用|占用|在线/, 'assigned'],
+  [/预留|保留/, 'reserved'],
+  [/冲突|异常|故障/, 'conflict']
+];
+
+/* ============================================================
+ * [2] 通用工具
+ * ============================================================ */
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function debounce(fn, ms) {
+  var t = null;
+  return function () {
+    var a = arguments, self = this;
+    clearTimeout(t);
+    t = setTimeout(function () { fn.apply(self, a); }, ms);
+  };
+}
+function uid(prefix) {
+  return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+}
+function nowIso() { return new Date().toISOString(); }
+function fmtBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(2) + ' MB';
+}
+function fmtTime(iso) {
+  if (!iso) return '—';
+  var d = new Date(iso);
+  if (isNaN(d)) return '—';
+  var p = function (x) { return (x < 10 ? '0' : '') + x; };
+  return d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function $(sel) { return document.querySelector(sel); }
+function toast(msg, opts) {
+  opts = opts || {};
+  var box = $('#toasts');
+  var el = document.createElement('div');
+  el.className = 'toast' + (opts.err ? ' err' : '');
+  el.textContent = msg;
+  if (opts.action) {
+    var b = document.createElement('button');
+    b.textContent = opts.action;
+    b.onclick = function () { dismiss(); opts.onAction(); };
+    el.appendChild(b);
+  }
+  var timer = setTimeout(dismiss, opts.ms || 3500);
+  function dismiss() {
+    clearTimeout(timer);
+    el.style.animation = 'none';
+    el.style.opacity = '0';
+    el.style.transform = 'translateY(6px)';
+    setTimeout(function () { el.remove(); }, 250);
+  }
+  box.appendChild(el);
+}
+
+/* ============================================================
+ * [3] Calc —— CIDR 纯函数层（无状态，可自测）
+ * ============================================================ */
+var Calc = {};
+function CalcError(msg) { this.message = msg; }
+CalcError.prototype = Object.create(Error.prototype);
+
+Calc.ipToUint = function (ip) {
+  var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(ip).trim());
+  if (!m) return null;
+  var a = +m[1], b = +m[2], c = +m[3], d = +m[4];
+  if (a > 255 || b > 255 || c > 255 || d > 255) return null;
+  return ((a << 24) | (b << 16) | (c << 8) | d) >>> 0;
+};
+Calc.uintToIp = function (u) {
+  u = u >>> 0;
+  return (u >>> 24) + '.' + ((u >>> 16) & 255) + '.' + ((u >>> 8) & 255) + '.' + (u & 255);
+};
+// 解析 CIDR；hostBitsNonzero 表示输入主机位非 0（用于规范化提示）
+Calc.parseCidr = function (str) {
+  var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\s*\/\s*(\d{1,2})$/.exec(String(str).trim());
+  if (!m) throw new CalcError('格式应为 a.b.c.d/掩码，如 192.168.10.0/24');
+  var a = +m[1], b = +m[2], c = +m[3], d = +m[4], pre = +m[5];
+  if (a > 255 || b > 255 || c > 255 || d > 255) throw new CalcError('IP 各段须在 0–255 之间');
+  if (pre > 32) throw new CalcError('掩码须在 0–32 之间');
+  var ip = ((a << 24) | (b << 16) | (c << 8) | d) >>> 0;
+  var mask = pre === 0 ? 0 : (0xFFFFFFFF << (32 - pre)) >>> 0;
+  var network = (ip & mask) >>> 0;
+  var broadcast = (network | (~mask >>> 0)) >>> 0;
+  var total = pre === 0 ? 4294967296 : (1 << (32 - pre)) >>> 0;
+  return {
+    ip: ip, pre: pre, mask: mask,
+    network: network, broadcast: broadcast, total: total,
+    hostBitsNonzero: network !== ip
+  };
+};
+// 规范化 CIDR 字符串（网络地址/掩码）
+Calc.normalizeCidr = function (str) {
+  var r = Calc.parseCidr(str);
+  return Calc.uintToIp(r.network) + '/' + r.pre;
+};
+// 格子下标 → IP 字符串
+Calc.idxToIp = function (networkUint, i) {
+  return Calc.uintToIp((networkUint + i) >>> 0);
+};
+// 格子角色：network / broadcast / host（/31 /32 全部 host）
+Calc.roleOf = function (index, total, pre) {
+  if (pre <= 30) {
+    if (index === 0) return 'network';
+    if (index === total - 1) return 'broadcast';
+  }
+  return 'host';
+};
+Calc.usableCount = function (total, pre) {
+  if (pre >= 31) return total;
+  return total - 2;
+};
+// IP 是否属于网段
+Calc.inSubnet = function (ipStr, networkUint, broadcastUint) {
+  var u = Calc.ipToUint(ipStr);
+  return u !== null && u >= networkUint && u <= broadcastUint;
+};
+// IP 属于网段时的格子下标；不属于返回 -1
+Calc.idxOfIp = function (ipStr, networkUint, broadcastUint) {
+  var u = Calc.ipToUint(ipStr);
+  if (u === null || u < networkUint || u > broadcastUint) return -1;
+  return u - networkUint;
+};
+
+/* ============================================================
+ * [4] Data —— 持久化层（load/migrate/save/backup/restore）
+ * ============================================================ */
+var Data = {};
+Data._safeParse = function (s) {
+  try { return JSON.parse(s); } catch (e) { return null; }
+};
+Data.migrate = function (data) {
+  // 迁移链：v0/v1 → 当前。未来版本在 MIGRATIONS 中追加
+  var MIGRATIONS = { /* 1: function v1toV2(d){...} */ };
+  if (!data || typeof data !== 'object') return Data.fresh();
+  if (!data.schemaVersion) data.schemaVersion = 1;
+  for (var v = data.schemaVersion; v < SCHEMA_VERSION; v++) {
+    if (MIGRATIONS[v]) MIGRATIONS[v](data);
+  }
+  data.schemaVersion = SCHEMA_VERSION;
+  if (!Array.isArray(data.subnets)) data.subnets = [];
+  data.subnets.forEach(function (s) {
+    if (!s.id) s.id = uid('snt');
+    if (!s.ips || typeof s.ips !== 'object') s.ips = {};
+  });
+  return data;
+};
+Data.fresh = function () {
+  return { schemaVersion: SCHEMA_VERSION, app: APP, updatedAt: nowIso(), subnets: [] };
+};
+Data.load = function () {
+  var raw = null;
+  try { raw = localStorage.getItem(LS.data); } catch (e) {}
+  var data = raw ? Data._safeParse(raw) : null;
+  if (!data && raw) {
+    // 主数据损坏 → 尝试备份槽
+    var bk = null;
+    try { bk = localStorage.getItem(LS.backup); } catch (e) {}
+    var bdata = bk ? Data._safeParse(bk) : null;
+    if (bdata) {
+      data = bdata;
+      setTimeout(function () { toast('主数据损坏，已从备份槽恢复', { err: true, ms: 6000 }); }, 0);
+    } else {
+      setTimeout(function () { toast('本地数据无法解析，已重置为空', { err: true, ms: 6000 }); }, 0);
+      return Data.fresh();
+    }
+  }
+  return data ? Data.migrate(data) : Data.fresh();
+};
+Data.save = function (data) {
+  data.updatedAt = nowIso();
+  try {
+    localStorage.setItem(LS.data, JSON.stringify(data));
+    return true;
+  } catch (e) {
+    if (e && (e.name === 'QuotaExceededError' || e.code === 22)) {
+      toast('保存失败：浏览器存储空间已满，请删除旧数据或导出备份', { err: true, ms: 6000 });
+    } else {
+      toast('保存失败：' + (e.message || e), { err: true });
+    }
+    return false;
+  }
+};
+Data.saveSoon = debounce(function () { Store && Store.persist(); }, 150);
+Data.backupCurrent = function () {
+  try {
+    var raw = localStorage.getItem(LS.data);
+    if (raw) localStorage.setItem(LS.backup, raw);
+    return true;
+  } catch (e) { return false; }
+};
+Data.restoreBackup = function () {
+  var bk = null;
+  try { bk = localStorage.getItem(LS.backup); } catch (e) {}
+  var d = bk ? Data._safeParse(bk) : null;
+  if (!d) { toast('没有可恢复的备份', { err: true }); return false; }
+  Data.backupCurrent();               // 恢复前把当前数据再备份一次
+  Store.state.data = Data.migrate(d);
+  Store.persist();
+  Store.emit();
+  toast('已恢复备份');
+  return true;
+};
+Data.loadSettings = function () {
+  var s = null;
+  try { s = Data._safeParse(localStorage.getItem(LS.settings)); } catch (e) {}
+  return Object.assign({
+    theme: '',            // '' | 'light' | 'dark'（'' = 跟随系统）
+    density: 32,
+    fontScale: 12,
+    lastSubnetId: '',
+    showNetBc: true,
+    panelDirtyTip: true,
+    subnetSort: 'created' // created | name | cidr | util
+  }, s || {});
+};
+Data.saveSettings = function () {
+  try { localStorage.setItem(LS.settings, JSON.stringify(Store.state.settings)); } catch (e) {}
+};
+Data.loadColmap = function () {
+  try { return Data._safeParse(localStorage.getItem(LS.colmap)); } catch (e) { return null; }
+};
+Data.saveColmap = function (cm) {
+  try { localStorage.setItem(LS.colmap, JSON.stringify(cm)); } catch (e) {}
+};
+// 状态关键词规则：读取生效规则（用户自定义优先），保存规则
+Data.loadKeywords = function () {
+  var saved = null;
+  try { saved = Data._safeParse(localStorage.getItem(LS.keywords)); } catch (e) {}
+  if (Array.isArray(saved) && saved.length) {
+    var out = [];
+    for (var i = 0; i < saved.length; i++) {
+      var kw = saved[i];
+      if (!kw || !kw.pattern || !STATUS_LABEL[kw.status]) continue;
+      try { out.push([new RegExp(kw.pattern, 'i'), kw.status]); } catch (e) {}
+    }
+    if (out.length) return out;
+  }
+  return STATUS_KEYWORDS;
+};
+Data.saveKeywords = function (rules) {
+  try {
+    localStorage.setItem(LS.keywords, JSON.stringify(rules.map(function (r) {
+      return { pattern: r[0].source, status: r[1] };
+    })));
+  } catch (e) {}
+};
+Data.estimateSize = function () {
+  try { return (localStorage.getItem(LS.data) || '').length * 2; } // UTF-16 码元近似
+  catch (e) { return 0; }
+};
+
+/* ============================================================
+ * [5] Store —— 状态中心（唯一可变状态入口）
+ * ============================================================ */
+var Store = {
+  state: null,
+  subs: [],
+  init: function () {
+    this.state = {
+      data: Data.load(),
+      settings: Data.loadSettings(),
+      ui: {
+        activeSubnetId: Data.loadSettings().lastSubnetId || '',
+        selectedIp: '',
+        panelOpen: false,
+        search: '',
+        statusFilter: ''     // '' = 全部
+      }
+    };
+    // 校正 lastSubnetId
+    if (this.state.ui.activeSubnetId && !this.findSubnet(this.state.ui.activeSubnetId)) {
+      this.state.ui.activeSubnetId = '';
+    }
+  },
+  sub: function (fn) { this.subs.push(fn); },
+  emit: function () {
+    this.subs.forEach(function (fn) { fn(Store.state); });
+  },
+  act: function (name) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    if (!ACTIONS[name]) { console.warn('unknown action', name); return; }
+    ACTIONS[name].apply(null, [this.state].concat(args));
+    this.persist();
+    this.emit();
+  },
+  persist: function () {
+    Data.save(this.state.data);
+    Data.saveSettings();
+    Render.footer();
+  },
+  findSubnet: function (id) {
+    for (var i = 0; i < this.state.data.subnets.length; i++) {
+      if (this.state.data.subnets[i].id === id) return this.state.data.subnets[i];
+    }
+    return null;
+  },
+  activeSubnet: function () {
+    return this.findSubnet(this.state.ui.activeSubnetId);
+  },
+  subnetStats: function (s) {
+    var info = Calc.parseCidr(s.cidr);
+    var st = { total: info.total, usable: Calc.usableCount(info.total, info.pre),
+               assigned: 0, reserved: 0, conflict: 0, free: 0, records: 0 };
+    for (var ip in s.ips) {
+      var r = s.ips[ip];
+      if (r.status === 'assigned') st.assigned++;
+      else if (r.status === 'reserved') st.reserved++;
+      else if (r.status === 'conflict') st.conflict++;
+      st.records++;
+    }
+    st.free = st.usable - st.assigned - st.reserved - st.conflict;
+    if (st.free < 0) st.free = 0;
+    st.util = st.usable ? Math.round(st.assigned / st.usable * 100) : 0;
+    st.info = info;
+    return st;
+  }
+};
+
+var ACTIONS = {
+  /* ---- 网段 ---- */
+  'subnet-add': function (st, patch) {
+    var cidr = Calc.normalizeCidr(patch.cidr);
+    var dup = st.data.subnets.some(function (s) { return s.cidr === cidr; });
+    if (dup) throw new CalcError('已存在相同网段 ' + cidr);
+    st.data.subnets.push({
+      id: uid('snt'), name: patch.name || cidr, cidr: cidr,
+      vlan: patch.vlan || '', note: patch.note || '',
+      createdAt: nowIso(), updatedAt: nowIso(), ips: {}
+    });
+    st.ui.activeSubnetId = st.data.subnets[st.data.subnets.length - 1].id;
+    st.settings.lastSubnetId = st.ui.activeSubnetId;
+  },
+  'subnet-update': function (st, id, patch) {
+    var s = Store.findSubnet(id);
+    if (!s) return;
+    if (patch.cidr) {
+      var cidr = Calc.normalizeCidr(patch.cidr);
+      var dup = st.data.subnets.some(function (x) { return x.cidr === cidr && x.id !== id; });
+      if (dup) throw new CalcError('已存在相同网段 ' + cidr);
+      // 网段变更后清理越界 IP 记录
+      var info = Calc.parseCidr(cidr);
+      for (var ip in s.ips) {
+        if (Calc.idxOfIp(ip, info.network, info.broadcast) < 0) delete s.ips[ip];
+      }
+      s.cidr = cidr;
+    }
+    if ('name' in patch) s.name = patch.name;
+    if ('vlan' in patch) s.vlan = patch.vlan;
+    if ('note' in patch) s.note = patch.note;
+    s.updatedAt = nowIso();
+  },
+  'subnet-delete': function (st, id) {
+    var i = st.data.subnets.findIndex(function (s) { return s.id === id; });
+    if (i >= 0) {
+      st.data.subnets.splice(i, 1);
+      if (st.ui.activeSubnetId === id) st.ui.activeSubnetId = '';
+      st.settings.lastSubnetId = st.ui.activeSubnetId;
+    }
+  },
+  'subnet-select': function (st, id) {
+    st.ui.activeSubnetId = id;
+    st.ui.selectedIp = '';
+    st.settings.lastSubnetId = id;
+  },
+  /* ---- IP 记录 ---- */
+  'ip-set': function (st, subnetId, ip, patch) {
+    var s = Store.findSubnet(subnetId);
+    if (!s) return;
+    var info = Calc.parseCidr(s.cidr);
+    if (Calc.idxOfIp(ip, info.network, info.broadcast) < 0) {
+      toast('IP ' + ip + ' 不属于网段 ' + s.cidr, { err: true });
+      return;
+    }
+    var rec = s.ips[ip] || {};
+    var merged = Object.assign({}, rec, patch);
+    // 空记录（free 且无任何字段）→ 删除
+    var hasField = FIELDS.some(function (f) { return merged[f]; });
+    if ((!merged.status || merged.status === 'free') && !hasField) {
+      delete s.ips[ip];
+    } else {
+      merged.status = merged.status || 'assigned';
+      merged.updatedAt = nowIso();
+      s.ips[ip] = merged;
+    }
+    s.updatedAt = nowIso();
+  },
+  'ip-clear': function (st, subnetId, ip) {
+    var s = Store.findSubnet(subnetId);
+    if (s) { delete s.ips[ip]; s.updatedAt = nowIso(); }
+  },
+  /* ---- UI ---- */
+  'select-ip': function (st, ip) { st.ui.selectedIp = ip; },
+  'open-panel': function (st, ip) {
+    st.ui.selectedIp = ip; st.ui.panelOpen = true;
+  },
+  'close-panel': function (st) { st.ui.panelOpen = false; st.ui.selectedIp = ''; },
+  'set-search': function (st, q) { st.ui.search = q; },
+  'set-density': function (st, v) {
+    st.settings.density = +v;
+    document.documentElement.style.setProperty('--cols', v);
+  },
+  'set-font': function (st, v) {
+    st.settings.fontScale = +v;
+    document.documentElement.style.setProperty('--cell-font', v + 'px');
+  },
+  'set-filter': function (st, v) { st.ui.statusFilter = v; },
+  'toggle-theme': function (st) {
+    var cur = document.documentElement.getAttribute('data-theme') || '';
+    var sysDark = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches;
+    var effective = cur || (sysDark ? 'dark' : 'light');
+    var next = effective === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    st.settings.theme = next;
+  }
+};
+
+/* ============================================================
+ * [6] Render —— 渲染层
+ * ============================================================ */
+var Render = {};
+Render.all = function () {
+  Render.theme();
+  Render.subnetList();
+  Render.content();
+  Render.footer();
+};
+Render.theme = function () {
+  var t = Store.state.settings.theme;
+  if (t) document.documentElement.setAttribute('data-theme', t);
+  else document.documentElement.removeAttribute('data-theme');
+};
+Render.subnetList = function () {
+  var box = $('#subnet-list');
+  var list = Store.state.data.subnets.slice();
+  if (!list.length) {
+    box.innerHTML = '<div class="empty-state">暂无网段<br>点击上方「＋ 新增」创建</div>';
+    return;
+  }
+  // 排序（设置持久化，默认创建顺序）
+  var sort = Store.state.settings.subnetSort || 'created';
+  if (sort === 'name') {
+    list.sort(function (a, b) { return String(a.name).localeCompare(String(b.name), 'zh-CN'); });
+  } else if (sort === 'cidr') {
+    list.sort(function (a, b) {
+      var ia = Calc.parseCidr(a.cidr), ib = Calc.parseCidr(b.cidr);
+      return ia.network !== ib.network ? ia.network - ib.network : ia.pre - ib.pre;
+    });
+  } else if (sort === 'util') {
+    list.sort(function (a, b) {
+      var ua = 0, ub = 0;
+      try { ua = Store.subnetStats(a).util; } catch (e) {}
+      try { ub = Store.subnetStats(b).util; } catch (e) {}
+      return ub - ua;
+    });
+  }
+  var html = '';
+  list.forEach(function (s) {
+    var stats, util = 0;
+    try { stats = Store.subnetStats(s); util = stats.util; } catch (e) { stats = null; }
+    html += '<div class="snt-card' + (s.id === Store.state.ui.activeSubnetId ? ' active' : '') + '" data-action="subnet-select" data-id="' + s.id + '">'
+      + '<div class="nm"><span>' + esc(s.name) + '</span>'
+      + '<span class="ops">'
+      + '<button data-action="subnet-edit" data-id="' + s.id + '" title="编辑">✎</button>'
+      + '<button data-action="subnet-delete" data-id="' + s.id + '" title="删除">🗑</button>'
+      + '</span></div>'
+      + '<div class="cidr">' + esc(s.cidr) + (s.vlan !== '' && s.vlan != null ? ' · VLAN' + esc(s.vlan) : '') + '</div>'
+      + '<div class="util-bar"><i style="width:' + util + '%"></i></div>'
+      + '<div class="util-txt">已分配 ' + util + '%</div>'
+      + '</div>';
+  });
+  box.innerHTML = html;
+};
+Render.content = function () {
+  var s = Store.activeSubnet();
+  var welcome = $('#welcome'), tb = $('#toolbar'), stats = $('#stats');
+  if (!s) {
+    welcome.hidden = false; tb.hidden = true; stats.hidden = true;
+    $('#grid').innerHTML = '';
+    $('#grid-note').hidden = true;
+    return;
+  }
+  welcome.hidden = true; tb.hidden = false; stats.hidden = false;
+  Render.grid(s);
+  Render.stats(s);
+  Render.legend();
+};
+Render.grid = function (s) {
+  var grid = $('#grid'), note = $('#grid-note');
+  var info;
+  try { info = Calc.parseCidr(s.cidr); }
+  catch (e) { grid.innerHTML = ''; note.hidden = false; note.textContent = '网段格式错误：' + e.message; return; }
+
+  if (info.total > RENDER_LIMIT) {
+    grid.innerHTML = '';
+    note.hidden = false;
+    note.textContent = '该网段共 ' + info.total + ' 个地址，超出格子图渲染上限（' + RENDER_LIMIT + '），已停用可视化。可通过顶部搜索定位 IP 后登记。';
+    return;
+  }
+  note.hidden = true;
+  var st = Store.state;
+  var q = st.ui.search.trim().toLowerCase();
+  var filter = st.ui.statusFilter;
+  var html = '';
+  var lastBlockPrefix = null;
+  var showSep = info.pre < 24;   // /23 及更小前缀：每 256 地址块加分隔行
+  for (var i = 0; i < info.total; i++) {
+    var ip = Calc.idxToIp(info.network, i);
+    var role = Calc.roleOf(i, info.total, info.pre);
+    if (showSep) {
+      var prefix = ip.replace(/\.\d+$/, '');
+      if (prefix !== lastBlockPrefix) {
+        lastBlockPrefix = prefix;
+        html += '<div class="gsep">' + esc(prefix) + '.x</div>';
+      }
+    }
+    if ((role === 'network' || role === 'broadcast') && !st.settings.showNetBc) continue;
+    var rec = s.ips[ip];
+    var status = rec ? rec.status : (role !== 'host' ? role : 'free');
+    var cls = 'cell st-' + status;
+    var matched = true;
+    if (q) {
+      matched = ip.toLowerCase().indexOf(q) >= 0 ||
+        (rec && ['name', 'hostname', 'purpose', 'note', 'mac', 'mgmtIp', 'iface'].some(function (f) {
+          return rec[f] && String(rec[f]).toLowerCase().indexOf(q) >= 0;
+        }));
+    }
+    if (filter && status !== filter) matched = false;
+    if ((q || filter) && !matched) cls += ' dim';
+    if ((q || filter) && matched) cls += ' hit';
+    if (ip === st.ui.selectedIp) cls += ' sel';
+    var label = rec && (rec.name || rec.hostname) ? (rec.name || rec.hostname) : STATUS_LABEL[status];
+    var tag = role === 'network' ? ' 网' : role === 'broadcast' ? ' 广' : '';
+    html += '<button class="' + cls + '" data-action="open-ip" data-ip="' + ip + '"'
+      + ' title="' + esc(ip + tag + ' · ' + label) + '">' + esc(ip.split('.').pop()) + '</button>';
+  }
+  grid.innerHTML = html;
+};
+Render.stats = function (s) {
+  var st;
+  try { st = Store.subnetStats(s); } catch (e) { $('#stats').innerHTML = ''; return; }
+  $('#stats').innerHTML =
+    '<span>总地址 <b>' + st.total + '</b></span>' +
+    '<span>可用 <b>' + st.usable + '</b></span>' +
+    '<span style="color:var(--st-assigned)">已分配 <b>' + st.assigned + '</b></span>' +
+    '<span style="color:var(--st-reserved)">预留 <b>' + st.reserved + '</b></span>' +
+    '<span style="color:var(--st-conflict)">冲突 <b>' + st.conflict + '</b></span>' +
+    '<span>空闲 <b>' + st.free + '</b></span>' +
+    '<span>利用率 <b>' + st.util + '%</b></span>' +
+    (s.note ? '<span>📝 ' + esc(s.note) + '</span>' : '');
+};
+Render.legend = function () {
+  var items = [['assigned', '已分配'], ['free', '空闲'], ['reserved', '预留'], ['conflict', '冲突']];
+  var cur = Store.state.ui.statusFilter;
+  $('#legend').innerHTML = items.map(function (it) {
+    return '<button class="chip' + (cur === it[0] ? ' on' : '') + '" data-action="filter" data-st="' + it[0] + '">'
+      + '<i style="background:var(--st-' + it[0] + ')"></i>' + it[1] + '</button>';
+  }).join('');
+};
+Render.footer = function () {
+  var d = Store.state.data;
+  var n = 0;
+  d.subnets.forEach(function (s) { n += Object.keys(s.ips).length; });
+  $('#ft-count').textContent = '网段 ' + d.subnets.length + ' · 登记记录 ' + n;
+  var size = Data.estimateSize();
+  var szEl = $('#ft-size');
+  szEl.textContent = '占用 ' + fmtBytes(size);
+  szEl.className = size > 3 * 1048576 ? 'warn' : '';
+  var hasBk = !!localStorage.getItem(LS.backup);
+  $('#ft-restore').hidden = !hasBk;
+};
+
+/* ============================================================
+ * [7] Panel —— IP 详情编辑
+ * ============================================================ */
+var Panel = {};
+Panel.current = function () {
+  return { subnetId: Store.state.ui.activeSubnetId, ip: Store.state.ui.selectedIp };
+};
+Panel.open = function (ip) {
+  var s = Store.activeSubnet();
+  if (!s) return;
+  Store.state.ui.selectedIp = ip;
+  Store.state.ui.panelOpen = true;
+  Panel.render();
+  Store.emit();
+};
+Panel.render = function () {
+  var s = Store.activeSubnet();
+  var ip = Store.state.ui.selectedIp;
+  var panel = $('#panel'), mask = $('#panel-mask');
+  if (!s || !ip || !Store.state.ui.panelOpen) {
+    panel.classList.remove('open'); mask.classList.remove('open');
+    return;
+  }
+  var info = Calc.parseCidr(s.cidr);
+  var idx = Calc.idxOfIp(ip, info.network, info.broadcast);
+  var role = idx >= 0 ? Calc.roleOf(idx, info.total, info.pre) : 'host';
+  $('#p-ip').textContent = ip;
+  var badge = $('#p-role');
+  if (role !== 'host') { badge.hidden = false; badge.textContent = STATUS_LABEL[role] + '·不可分配'; }
+  else badge.hidden = true;
+
+  var rec = s.ips[ip] || {};
+  var status = rec.status || (role !== 'host' ? role : 'free');
+  $('#p-status').querySelectorAll('button').forEach(function (b) {
+    b.classList.toggle('on', b.dataset.st === status);
+  });
+  $('#p-name').value = rec.name || '';
+  $('#p-hostname').value = rec.hostname || '';
+  $('#p-mgmt').value = rec.mgmtIp || '';
+  $('#p-iface').value = rec.iface || '';
+  $('#p-mac').value = rec.mac || '';
+  $('#p-purpose').value = rec.purpose || '';
+  $('#p-devtype').value = rec.deviceType || '';
+  $('#p-note').value = rec.note || '';
+  $('#f-mgmt').classList.remove('invalid');
+  $('#f-mac').classList.remove('invalid');
+
+  panel.classList.add('open'); mask.classList.add('open');
+};
+Panel.collect = function () {
+  return {
+    name: $('#p-name').value.trim(),
+    hostname: $('#p-hostname').value.trim(),
+    mgmtIp: $('#p-mgmt').value.trim(),
+    iface: $('#p-iface').value.trim(),
+    mac: $('#p-mac').value.trim(),
+    purpose: $('#p-purpose').value.trim(),
+    deviceType: $('#p-devtype').value,
+    note: $('#p-note').value.trim()
+  };
+};
+// 面板状态按钮当前选中的状态
+Panel.selectedStatus = function () {
+  var on = document.querySelector('#p-status button.on');
+  return on ? on.dataset.st : 'free';
+};
+// 将草稿回填到表单（防止状态按钮的 re-render 冲掉未保存输入）
+Panel.applyDraft = function (draft) {
+  $('#p-name').value = draft.name || '';
+  $('#p-hostname').value = draft.hostname || '';
+  $('#p-mgmt').value = draft.mgmtIp || '';
+  $('#p-iface').value = draft.iface || '';
+  $('#p-mac').value = draft.mac || '';
+  $('#p-purpose').value = draft.purpose || '';
+  $('#p-devtype').value = draft.deviceType || '';
+  $('#p-note').value = draft.note || '';
+};
+Panel.save = function () {
+  var cur = Panel.current();
+  var s = Store.activeSubnet();
+  if (!s || !cur.ip) return;
+  var patch = Panel.collect();
+  var rec = s.ips[cur.ip] || {};
+  // 软校验
+  $('#f-mgmt').classList.toggle('invalid', !!(patch.mgmtIp && !Calc.ipToUint(patch.mgmtIp)));
+  $('#f-mac').classList.toggle('invalid', !!(patch.mac && !/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(patch.mac)));
+  var hasContent = FIELDS.some(function (f) { return patch[f]; });
+  var selected = Panel.selectedStatus();
+  if (!hasContent && !rec.status && selected === 'free') {
+    // 空闲且无任何内容的保存 = 误操作，不自动改状态
+    toast('未填写任何信息，如需登记请先填写字段或选择状态', { err: true });
+    return;
+  }
+  var info = Calc.parseCidr(s.cidr);
+  var idx = Calc.idxOfIp(cur.ip, info.network, info.broadcast);
+  var role = Calc.roleOf(idx, info.total, info.pre);
+  if (role !== 'host') {
+    // 网络/广播地址：保持角色标记，不允许标为已分配（与状态按钮拦截一致）
+    patch.status = (rec.status === 'reserved' || rec.status === 'conflict') ? rec.status : role;
+  } else if (hasContent && selected === 'free' && !rec.status) {
+    // 首次填写登记信息：按已分配处理
+    patch.status = 'assigned';
+  } else {
+    patch.status = rec.status || selected;
+  }
+  Store.act('ip-set', s.id, cur.ip, patch);
+  Panel.render();
+  toast(cur.ip + ' 已保存');
+};
+Panel.quickStatus = function (st) {
+  var cur = Panel.current();
+  var s = Store.activeSubnet();
+  if (!s || !cur.ip) return;
+  var info = Calc.parseCidr(s.cidr);
+  var idx = Calc.idxOfIp(cur.ip, info.network, info.broadcast);
+  var role = Calc.roleOf(idx, info.total, info.pre);
+  if (role !== 'host' && st === 'assigned') {
+    toast(STATUS_LABEL[role] + '不可标记为已分配', { err: true });
+    return;
+  }
+  var draft = Panel.collect();
+  Store.act('ip-set', s.id, cur.ip, { status: st });
+  Panel.render();
+  Panel.applyDraft(draft);
+};
+Panel.clear = function () {
+  var cur = Panel.current();
+  var s = Store.activeSubnet();
+  if (!s || !cur.ip) return;
+  Dialog.confirm('清除登记', '确定清除 ' + cur.ip + ' 的登记信息？', function () {
+    Store.act('ip-clear', s.id, cur.ip);
+    Panel.render();
+  });
+};
+Panel.step = function (dir) {
+  var s = Store.activeSubnet();
+  if (!s) return;
+  var info = Calc.parseCidr(s.cidr);
+  var cur = Store.state.ui.selectedIp;
+  var idx = Calc.idxOfIp(cur, info.network, info.broadcast);
+  if (idx < 0) idx = 0;
+  // 跳过被隐藏的网络/广播格
+  var next;
+  do {
+    idx += dir;
+    if (idx < 0 || idx >= info.total) return;
+    next = Calc.idxToIp(info.network, idx);
+  } while (!Store.state.settings.showNetBc && Calc.roleOf(idx, info.total, info.pre) !== 'host');
+  Panel.open(next);
+};
+
+/* ============================================================
+ * [7b] Batch —— 右键四态菜单 + 批量多选设状态
+ * ============================================================ */
+var Batch = {};
+Batch.sel = [];          // ['192.168.1.5', ...] 批量选中的 IP
+Batch.anchor = null;     // Shift 范围选择的起点 IP
+
+Batch.toggle = function (ip, mode) {
+  var i = Batch.sel.indexOf(ip);
+  if (mode === 'range' && Batch.anchor) {
+    // Shift：把 anchor→ip 的区间并入选择
+    var s = Store.activeSubnet();
+    if (!s) return;
+    var info = Calc.parseCidr(s.cidr);
+    var a = Calc.idxOfIp(Batch.anchor, info.network, info.broadcast);
+    var b = Calc.idxOfIp(ip, info.network, info.broadcast);
+    if (a < 0 || b < 0) return;
+    if (a > b) { var t = a; a = b; b = t; }
+    for (var k = a; k <= b; k++) {
+      var ipk = Calc.idxToIp(info.network, k);
+      if (Batch.sel.indexOf(ipk) < 0) Batch.sel.push(ipk);
+    }
+    Batch.sel.sort();
+  } else {
+    if (i >= 0) Batch.sel.splice(i, 1);
+    else { Batch.sel.push(ip); Batch.anchor = ip; }
+  }
+  Batch.anchor = ip;
+  Batch.paint();
+  Batch.bar();
+};
+Batch.clear = function () {
+  Batch.sel = [];
+  Batch.anchor = null;
+  Batch.paint();
+  Batch.bar();
+};
+Batch.paint = function () {
+  document.querySelectorAll('.cell.multi').forEach(function (c) { c.classList.remove('multi'); });
+  Batch.sel.forEach(function (ip) {
+    var c = document.querySelector('.cell[data-ip="' + ip + '"]');
+    if (c) c.classList.add('multi');
+  });
+};
+Batch.bar = function () {
+  var bar = $('#batch-bar');
+  if (Batch.sel.length) {
+    bar.classList.add('open');
+    $('#batch-n').textContent = Batch.sel.length;
+  } else {
+    bar.classList.remove('open');
+  }
+};
+Batch.apply = function (status) {
+  var s = Store.activeSubnet();
+  if (!s || !Batch.sel.length) return;
+  var info = Calc.parseCidr(s.cidr);
+  var blocked = 0, done = 0;
+  Batch.sel.forEach(function (ip) {
+    var idx = Calc.idxOfIp(ip, info.network, info.broadcast);
+    if (idx < 0) return;
+    var role = Calc.roleOf(idx, info.total, info.pre);
+    if (role !== 'host' && status === 'assigned') { blocked++; return; }
+    Store.act('ip-set', s.id, ip, { status: status });
+    done++;
+  });
+  var label = STATUS_LABEL[status];
+  if (done) toast('已批量设置 ' + done + ' 格为「' + label + '」' + (blocked ? '；' + blocked + ' 格为网络/广播地址已跳过' : ''));
+  else if (blocked) toast('所选均为网络/广播地址，不可设为已分配', { err: true });
+  Batch.clear();
+};
+
+/* 右键菜单：单格 = 快速设状态；多选时 = 批量设状态 */
+Batch.menu = function (ev, ip) {
+  var s = Store.activeSubnet();
+  if (!s) return;
+  var menu = $('#ctx-menu');
+  var multi = Batch.sel.length > 1 || (Batch.sel.length === 1 && Batch.sel[0] !== ip);
+  var target = multi ? Batch.sel : [ip];
+  var head = multi
+    ? '批量 ' + target.length + ' 格'
+    : ip + ' · ' + STATUS_LABEL[(s.ips[ip] || {}).status || 'free'];
+  var html = '<div class="ctx-head">' + esc(head) + '</div>';
+  html += ['assigned', 'free', 'reserved', 'conflict'].map(function (st) {
+    return '<button data-bst="' + st + '"><i style="background:var(--st-' + st + ')"></i>' + STATUS_LABEL[st] + '</button>';
+  }).join('');
+  menu.innerHTML = html;
+  menu.classList.add('open');
+  // 定位：防止溢出视口
+  var mw = menu.offsetWidth, mh = menu.offsetHeight;
+  var x = Math.min(ev.clientX, window.innerWidth - mw - 8);
+  var y = Math.min(ev.clientY, window.innerHeight - mh - 8);
+  menu.style.left = Math.max(4, x) + 'px';
+  menu.style.top = Math.max(4, y) + 'px';
+  menu.onclick = function (e) {
+    var b = e.target.closest('button[data-bst]');
+    if (!b) return;
+    menu.classList.remove('open');
+    var st = b.dataset.bst;
+    if (multi) Batch.apply(st);
+    else {
+      var info = Calc.parseCidr(s.cidr);
+      var idx = Calc.idxOfIp(ip, info.network, info.broadcast);
+      var role = Calc.roleOf(idx, info.total, info.pre);
+      if (role !== 'host' && st === 'assigned') { toast(STATUS_LABEL[role] + '不可标记为已分配', { err: true }); return; }
+      Store.act('ip-set', s.id, ip, { status: st });
+      toast(ip + ' 已设为「' + STATUS_LABEL[st] + '」');
+    }
+  };
+};
+
+/* ============================================================
+ * [8] Dialog —— 通用确认框 / 输入框
+ * ============================================================ */
+var Dialog = {};
+Dialog.confirm = function (title, body, onOk, okLabel, cancelLabel, onCancel) {
+  var dlg = $('#confirm');
+  $('#cf-title').textContent = title;
+  $('#cf-body').innerHTML = body;
+  $('#cf-body').querySelectorAll('script,style,iframe').forEach(function (n) { n.remove(); });
+  var foot = $('#cf-foot');
+  foot.innerHTML = '';
+  var cancel = document.createElement('button');
+  cancel.className = 'btn'; cancel.textContent = cancelLabel || '取消';
+  cancel.onclick = function () { dlg.close(); onCancel && onCancel(); };
+  var ok = document.createElement('button');
+  ok.className = 'btn primary'; ok.textContent = okLabel || '确定';
+  ok.onclick = function () { dlg.close(); onOk && onOk(); };
+  foot.appendChild(cancel); foot.appendChild(ok);
+  dlg.showModal();
+};
+Dialog.promptSubnet = function (editId) {
+  var s = editId ? Store.findSubnet(editId) : null;
+  $('#dlg-title').textContent = s ? '编辑网段' : '新增网段';
+  $('#dlg-body').innerHTML =
+    '<div class="dlg-form-stack">'
+    + '<div class="fld"><label>网段 CIDR *</label><input id="d-cidr" placeholder="192.168.10.0/24" value="' + esc(s ? s.cidr : '') + '"></div>'
+    + '<div class="fld"><label>名称</label><input id="d-name" placeholder="如：办公区-VLAN10" value="' + esc(s ? s.name : '') + '"></div>'
+    + '<div class="fld"><label>VLAN ID（可空）</label><input id="d-vlan" placeholder="10" value="' + esc(s && s.vlan != null ? s.vlan : '') + '"></div>'
+    + '<div class="fld"><label>备注</label><input id="d-note" value="' + esc(s ? s.note : '') + '"></div>'
+    + '<div class="dlg-error" id="d-err"></div>'
+    + '</div>';
+  var foot = $('#dlg-foot');
+  foot.innerHTML = '';
+  var cancel = document.createElement('button');
+  cancel.className = 'btn'; cancel.textContent = '取消';
+  cancel.onclick = function () { $('#dlg').close(); };
+  var ok = document.createElement('button');
+  ok.className = 'btn primary'; ok.textContent = s ? '保存' : '创建';
+  ok.onclick = function () {
+    var cidr = $('#d-cidr').value, name = $('#d-name').value.trim(),
+        vlan = $('#d-vlan').value.trim(), note = $('#d-note').value.trim();
+    try {
+      var info = Calc.parseCidr(cidr);
+      if (info.hostBitsNonzero) {
+        var fixed = Calc.normalizeCidr(cidr);
+        Dialog.confirm('需要正确的网络地址',
+          '「' + esc(cidr) + '」不是 /' + info.pre + ' 网段的网络地址。<br>'
+          + '掩码 /' + info.pre + ' 表示前 ' + info.pre + ' 位是网络位，网络地址须是网段的首个地址；'
+          + '输入中「' + esc(Calc.uintToIp(info.ip)) + '」的低 ' + (32 - info.pre) + ' 位（主机位）不为 0。<br>'
+          + '将按网络地址 <b>' + esc(fixed) + '</b> 处理，是否继续？',
+          function () {
+            $('#d-cidr').value = fixed;
+            ok.click();
+          });
+        return;
+      }
+      if (info.total > RENDER_LIMIT) {
+        Dialog.confirm('网段较大', '该网段共 <b>' + info.total + '</b> 个地址，格子图已停用（上限 ' + RENDER_LIMIT + '），仍可创建并通过搜索登记。继续？', function () {
+          doSave();
+        });
+        return;
+      }
+      // 编辑时改小 CIDR：提示将被清理的越界记录数
+      if (s && Calc.normalizeCidr(cidr) !== s.cidr) {
+        var newInfo = Calc.parseCidr(Calc.normalizeCidr(cidr));
+        var oob = 0;
+        for (var ipk in s.ips) {
+          if (Calc.idxOfIp(ipk, newInfo.network, newInfo.broadcast) < 0) oob++;
+        }
+        if (oob > 0) {
+          Dialog.confirm('有记录将越界',
+            '新网段 <b>' + esc(Calc.normalizeCidr(cidr)) + '</b> 不包含现有的 <b>' + oob + '</b> 条登记记录，保存后这些记录将被<b>删除</b>。继续？',
+            function () { doSave(); }, '继续');
+          return;
+        }
+      }
+      doSave();
+    } catch (e) {
+      $('#d-err').textContent = e.message;
+    }
+    function doSave() {
+      try {
+        if (s) Store.act('subnet-update', s.id, { cidr: cidr, name: name, vlan: vlan, note: note });
+        else Store.act('subnet-add', { cidr: cidr, name: name, vlan: vlan, note: note });
+        $('#dlg').close();
+      } catch (e2) {
+        $('#d-err').textContent = e2.message;
+      }
+    }
+  };
+  foot.appendChild(cancel); foot.appendChild(ok);
+  $('#dlg').showModal();
+  $('#d-cidr').focus();
+};
+
+/* ============================================================
+ * [9] IO —— 文件层（JSON / CSV / Mini-XLSX / 列映射向导）
+ * ============================================================ */
+var IO = {};
+IO.hasDecompress = typeof DecompressionStream === 'function';
+IO.tableImportAccept = function () { return IO.hasDecompress ? '.xlsx,.csv' : '.csv'; };
+IO.updateCompatibilityUI = function () {
+  var b = $('#import-table');
+  if (!b) return;
+  if (IO.hasDecompress) {
+    b.textContent = '导入表格';
+    b.title = '导入 Excel/CSV 登记表';
+  } else {
+    b.textContent = '导入 CSV';
+    b.title = '当前浏览器不支持 xlsx 解压，仅可导入 CSV；JSON 备份仍可用';
+  }
+};
+
+/* ---------- JSON 备份 ---------- */
+IO.exportJSON = function () {
+  var blob = new Blob([JSON.stringify(Store.state.data, null, 2)], { type: 'application/json' });
+  IO.download(blob, 'ipviewer-backup-' + IO.dateStamp() + '.json');
+  toast('已导出 JSON 备份');
+};
+IO.importJSON = function (file) {
+  var fr = new FileReader();
+  fr.onload = function () {
+    var d = Data._safeParse(fr.result);
+    if (!d || !Array.isArray(d.subnets)) { toast('JSON 格式不正确：缺少 subnets', { err: true }); return; }
+    Dialog.confirm('导入备份', '将导入 <b>' + d.subnets.length + '</b> 个网段，并<b>覆盖</b>当前数据（当前数据自动备份）。继续？', function () {
+      Data.backupCurrent();
+      Store.state.data = Data.migrate(d);
+      Store.state.ui.activeSubnetId = '';
+      Store.persist();
+      Store.emit();
+      toast('导入成功');
+    }, '导入');
+  };
+  fr.readAsText(file, 'utf-8');
+};
+IO.dateStamp = function () {
+  var d = new Date(), p = function (x) { return (x < 10 ? '0' : '') + x; };
+  return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
+};
+IO.download = function (blob, name) {
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+};
+
+/* ---------- 表格导出（当前网段 → 行） ---------- */
+IO.tableHeaders = function () {
+  return ['IP', '状态', '设备名称', '主机名', '管理IP', '使用接口', 'MAC地址', '用途', '设备类型', '备注', '网段'];
+};
+IO.subnetRows = function (s) {
+  var info = Calc.parseCidr(s.cidr);
+  var rows = [];
+  for (var i = 0; i < info.total; i++) {
+    var ip = Calc.idxToIp(info.network, i);
+    var rec = s.ips[ip];
+    if (!rec) continue;
+    rows.push([
+      ip,
+      STATUS_LABEL[rec.status] || rec.status || '',
+      rec.name || '', rec.hostname || '', rec.mgmtIp || '', rec.iface || '', rec.mac || '',
+      rec.purpose || '', DEVTYPE_LABEL[rec.deviceType] || rec.deviceType || '',
+      rec.note || '', s.cidr
+    ]);
+  }
+  return rows;
+};
+IO.allRows = function () {
+  var rows = [];
+  Store.state.data.subnets.forEach(function (s) {
+    IO.subnetRows(s).forEach(function (r) { rows.push(r); });
+  });
+  return rows;
+};
+IO.exportTable = function (fmt) {
+  var headers = IO.tableHeaders();
+  var rows = IO.allRows();
+  if (!rows.length) { toast('没有登记记录可导出', { err: true }); return; }
+  var name = 'ip-registry-' + IO.dateStamp();
+  if (fmt === 'xlsx') {
+    IO.Xlsx.write([[headers].concat(rows)], name + '.xlsx');
+    toast('已导出 xlsx（' + rows.length + ' 行）');
+  } else {
+    IO.download(new Blob(['﻿' + IO.csvEncode([headers].concat(rows))], { type: 'text/csv' }), name + '.csv');
+    toast('已导出 CSV（' + rows.length + ' 行）');
+  }
+};
+
+/* ---------- CSV ---------- */
+IO.csvEncode = function (rows) {
+  return rows.map(function (row) {
+    return row.map(function (cell) {
+      cell = String(cell == null ? '' : cell);
+      if (/[",\r\n]/.test(cell)) cell = '"' + cell.replace(/"/g, '""') + '"';
+      return cell;
+    }).join(',');
+  }).join('\r\n');
+};
+IO.csvParse = function (text) {
+  // 状态机：处理引号内逗号/换行/转义
+  var rows = [], row = [], cell = '', i = 0, inQ = false;
+  text = text.replace(/^﻿/, '');
+  while (i < text.length) {
+    var ch = text[i];
+    if (inQ) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { cell += '"'; i += 2; continue; }
+        inQ = false; i++; continue;
+      }
+      cell += ch; i++; continue;
+    }
+    if (ch === '"' && cell === '') { inQ = true; i++; continue; }
+    if (ch === ',') { row.push(cell); cell = ''; i++; continue; }
+    if (ch === '\r') { i++; continue; }
+    if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; i++; continue; }
+    cell += ch; i++;
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+};
+IO.decodeText = function (buf) {
+  // 优先 UTF-8；大量替换符则回退 GBK（中文 Windows Excel 导出 CSV 常见）
+  var utf8 = new TextDecoder('utf-8').decode(buf);
+  if (!/�/.test(utf8)) return utf8;
+  try { return new TextDecoder('gbk').decode(buf); } catch (e) { return utf8; }
+};
+
+/* ---------- Mini-XLSX 读取器 ----------
+ * 依赖 DecompressionStream('deflate-raw') + DOMParser
+ * 返回 { sheets: [{name, rows: [[cell,...],...]}] }
+ */
+IO.Xlsx = {};
+// read 返回 Promise<{sheets:[{name, rows}]}>（zip 解压为异步）
+IO.Xlsx.read = function (buf) {
+  if (!IO.hasDecompress) {
+    return Promise.reject(new Error('当前浏览器不支持 xlsx 解压（需 Edge/Chrome ≥ 103），请改用 CSV 导入或升级浏览器'));
+  }
+  var u8 = new Uint8Array(buf);
+  return IO.Xlsx.parseZip(u8).then(function (entries) {
+    return IO.Xlsx._readFromEntries(entries);
+  });
+};
+IO.Xlsx._readFromEntries = function (entries) {
+  var get = function (name) {
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i].name === name) return entries[i];
+    }
+    return null;
+  };
+  var wb = get('xl/workbook.xml');
+  if (!wb) throw new Error('不是有效的 .xlsx 文件（缺少 workbook.xml），文件可能已加密');
+  var wbDoc = new DOMParser().parseFromString(IO.Xlsx.utf8Text(wb.data), 'application/xml');
+  var rels = get('xl/_rels/workbook.xml.rels');
+  var relMap = {};
+  if (rels) {
+    var relDoc = new DOMParser().parseFromString(IO.Xlsx.utf8Text(rels.data), 'application/xml');
+    relDoc.querySelectorAll('Relationship').forEach(function (r) {
+      relMap[r.getAttribute('Id')] = r.getAttribute('Target').replace(/^\//, '');
+    });
+  }
+  var sheets = [];
+  var sst = [];
+  var ssEntry = get('xl/sharedStrings.xml');
+  if (ssEntry) {
+    var ssDoc = new DOMParser().parseFromString(IO.Xlsx.utf8Text(ssEntry.data), 'application/xml');
+    ssDoc.querySelectorAll('si').forEach(function (si) {
+      var t = '';
+      si.querySelectorAll('t').forEach(function (x) { t += x.textContent; });
+      sst.push(t);
+    });
+  }
+  wbDoc.querySelectorAll('sheet').forEach(function (sh) {
+    var rid = sh.getAttribute('r:id') || sh.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
+    var target = relMap[rid] || '';
+    if (/^\//.test(target)) target = target.slice(1);
+    else if (!/^xl\//.test(target)) target = 'xl/' + target;
+    var e = get(target);
+    if (!e) return;
+    var xml = new DOMParser().parseFromString(IO.Xlsx.utf8Text(e.data), 'application/xml');
+    sheets.push({ name: sh.getAttribute('name') || target, rows: IO.Xlsx.readSheet(xml, sst) });
+  });
+  if (!sheets.length) throw new Error('xlsx 中未找到工作表');
+  return { sheets: sheets };
+};
+IO.Xlsx.utf8Text = function (u8) { return new TextDecoder('utf-8').decode(u8); };
+IO.Xlsx.parseZip = function (u8) {
+  // 扫描 EOCD → 中央目录 → 逐条目定位局部头取数据
+  var EOCD_SIG = 0x06054b50, CD_SIG = 0x02014b50;
+  var eocd = -1;
+  for (var i = u8.length - 22; i >= Math.max(0, u8.length - 65558); i--) {
+    if (u8[i] === 0x50 && u8[i + 1] === 0x4b && u8[i + 2] === 0x05 && u8[i + 3] === 0x06) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('无效的 zip 文件（未找到 EOCD）');
+  var dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  var count = dv.getUint16(eocd + 10, true);
+  var cdOff = dv.getUint32(eocd + 16, true);
+  var entries = [];
+  var p = cdOff;
+  for (var n = 0; n < count; n++) {
+    if (dv.getUint32(p, true) !== CD_SIG) break;
+    var method = dv.getUint16(p + 10, true);
+    var csize = dv.getUint32(p + 20, true);
+    var nameLen = dv.getUint16(p + 28, true);
+    var extraLen = dv.getUint16(p + 30, true);
+    var cmtLen = dv.getUint16(p + 32, true);
+    var lho = dv.getUint32(p + 42, true);
+    var name = '';
+    for (var c = 0; c < nameLen; c++) name += String.fromCharCode(u8[p + 46 + c]);
+    // 局部头：30 字节 + 名长 + 扩展长
+    var lNameLen = dv.getUint16(lho + 26, true);
+    var lExtraLen = dv.getUint16(lho + 28, true);
+    var dataStart = lho + 30 + lNameLen + lExtraLen;
+    var raw = u8.subarray(dataStart, dataStart + csize);
+    entries.push({ name: name, method: method, data: method === 0 ? raw.slice() : null, compressed: method === 8 ? raw : null });
+    p += 46 + nameLen + extraLen + cmtLen;
+  }
+  // 解压 DEFLATE 条目（异步 → 全部完成后返回）
+  return IO.Xlsx._inflateAll(entries);
+};
+IO.Xlsx._inflateAll = function (entries) {
+  var jobs = [];
+  entries.forEach(function (e) {
+    if (e.method === 0 || !e.compressed) return;
+    jobs.push(new Response(new Blob([e.compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw')))
+      .arrayBuffer().then(function (ab) { e.data = new Uint8Array(ab); }));
+  });
+  return Promise.all(jobs).then(function () { return entries; });
+};
+IO.Xlsx.readSheet = function (xml, sst) {
+  var rows = [];
+  var maxCols = 0;
+  xml.querySelectorAll('sheetData > row').forEach(function (rowEl) {
+    var cells = [];
+    rowEl.querySelectorAll('c').forEach(function (cEl) {
+      var ref = cEl.getAttribute('r') || '';
+      var m = /^([A-Z]+)(\d+)$/.exec(ref);
+      var col = m ? IO.Xlsx.colToIdx(m[1]) : cells.length;
+      var t = cEl.getAttribute('t');
+      var val = '';
+      if (t === 's') {
+        var vEl = cEl.querySelector('v');
+        val = vEl ? (sst[+vEl.textContent] || '') : '';
+      } else if (t === 'inlineStr') {
+        var tt = '';
+        cEl.querySelectorAll('t').forEach(function (x) { tt += x.textContent; });
+        val = tt;
+      } else {
+        var v = cEl.querySelector('v');
+        val = v ? v.textContent : '';
+      }
+      cells[col] = val;
+    });
+    // 行尾缺失的列不产出 <c> 元素 —— 以全表最大列数补齐，保证每行列数一致
+    if (cells.length > maxCols) maxCols = cells.length;
+    var dense = [];
+    for (var i = 0; i < maxCols; i++) dense.push(cells[i] == null ? '' : cells[i]);
+    rows.push(dense);
+  });
+  // 二次遍历：先前行短于最终 maxCols 的补齐
+  rows.forEach(function (r) {
+    while (r.length < maxCols) r.push('');
+  });
+  return rows;
+};
+IO.Xlsx.colToIdx = function (letters) {
+  var n = 0;
+  for (var i = 0; i < letters.length; i++) n = n * 26 + (letters.charCodeAt(i) - 64);
+  return n - 1;
+};
+
+/* ---------- Mini-XLSX 写出器（STORE zip + CRC32） ---------- */
+IO.Xlsx.crcTable = (function () {
+  var t = [], c, k, n;
+  for (n = 0; n < 256; n++) {
+    c = n;
+    for (k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+IO.Xlsx.crc32 = function (u8) {
+  var c = 0xFFFFFFFF;
+  for (var i = 0; i < u8.length; i++) c = IO.Xlsx.crcTable[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+};
+IO.Xlsx.write = function (sheetsArr, filename) {
+  // sheetsArr: [{name, rows}] → 最小合法 xlsx（inline string，STORE zip）
+  var files = [];
+  var contentTypes = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
+    '<Default Extension="xml" ContentType="application/xml"/>',
+    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'];
+  var wbSheets = '', rels = '';
+  sheetsArr.forEach(function (sh, i) {
+    var id = i + 1;
+    files.push(['xl/worksheets/sheet' + id + '.xml', IO.Xlsx.sheetXml(sh.rows)]);
+    contentTypes.push('<Override PartName="/xl/worksheets/sheet' + id + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>');
+    wbSheets += '<sheet name="' + IO.Xlsx.xesc(sh.name || ('Sheet' + id)) + '" sheetId="' + id + '" r:id="rId' + id + '"/>';
+    rels += '<Relationship Id="rId' + id + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + id + '.xml"/>';
+  });
+  contentTypes.push('</Types>');
+  files.unshift(
+    ['[Content_Types].xml', contentTypes.join('')],
+    ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+    ['xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + wbSheets + '</sheets></workbook>'],
+    ['xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + rels + '</Relationships>']
+  );
+  var zip = IO.Xlsx.zipStore(files);
+  IO.download(new Blob([zip], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), filename);
+};
+IO.Xlsx.xesc = function (s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+};
+IO.Xlsx.sheetXml = function (rows) {
+  var xml = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'];
+  rows.forEach(function (row, r) {
+    xml.push('<row r="' + (r + 1) + '">');
+    row.forEach(function (cell, c) {
+      if (cell == null || cell === '') return;
+      var ref = IO.Xlsx.idxToCol(c) + (r + 1);
+      if (typeof cell === 'number' && isFinite(cell)) {
+        xml.push('<c r="' + ref + '"><v>' + cell + '</v></c>');
+      } else {
+        xml.push('<c r="' + ref + '" t="inlineStr"><is><t xml:space="preserve">' + IO.Xlsx.xesc(cell) + '</t></is></c>');
+      }
+    });
+    xml.push('</row>');
+  });
+  xml.push('</sheetData></worksheet>');
+  return xml.join('');
+};
+IO.Xlsx.idxToCol = function (n) {
+  var s = '';
+  n = n + 1;
+  while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - 1 - m) / 26; }
+  return s;
+};
+IO.Xlsx.zipStore = function (files) {
+  // files: [[name, str]] → Uint8Array zip（全部 STORE）
+  var enc = new TextEncoder();
+  var parts = [], central = [], offset = 0;
+  files.forEach(function (f) {
+    var nameU8 = enc.encode(f[0]);
+    var dataU8 = enc.encode(f[1]);
+    var crc = IO.Xlsx.crc32(dataU8);
+    var lh = new Uint8Array(30 + nameU8.length);
+    var dv = new DataView(lh.buffer);
+    dv.setUint32(0, 0x04034b50, true);
+    dv.setUint16(4, 20, true);        // version
+    dv.setUint16(8, 0, true);         // method STORE
+    dv.setUint16(10, 0, true); dv.setUint16(12, 0, true); // time/date
+    dv.setUint32(14, crc, true);
+    dv.setUint32(18, dataU8.length, true);
+    dv.setUint32(22, dataU8.length, true);
+    dv.setUint16(26, nameU8.length, true);
+    lh.set(nameU8, 30);
+    parts.push(lh, dataU8);
+    central.push({ name: nameU8, crc: crc, size: dataU8.length, off: offset });
+    offset += lh.length + dataU8.length;
+  });
+  var cdStart = offset;
+  var cdSize = 0;
+  central.forEach(function (e) {
+    var ch = new Uint8Array(46 + e.name.length);
+    var dv = new DataView(ch.buffer);
+    dv.setUint32(0, 0x02014b50, true);
+    dv.setUint16(4, 20, true); dv.setUint16(6, 20, true);
+    dv.setUint16(10, 0, true);         // STORE
+    dv.setUint32(16, e.crc, true);
+    dv.setUint32(20, e.size, true); dv.setUint32(24, e.size, true);
+    dv.setUint16(28, e.name.length, true);
+    dv.setUint32(42, e.off, true);
+    ch.set(e.name, 46);
+    parts.push(ch);
+    cdSize += ch.length;
+    offset += ch.length;
+  });
+  var eocd = new Uint8Array(22);
+  var dv2 = new DataView(eocd.buffer);
+  dv2.setUint32(0, 0x06054b50, true);
+  dv2.setUint16(8, central.length, true);
+  dv2.setUint16(10, central.length, true);
+  dv2.setUint32(12, cdSize, true);
+  dv2.setUint32(16, cdStart, true);
+  parts.push(eocd);
+  var total = 0;
+  parts.forEach(function (p) { total += p.length; });
+  var out = new Uint8Array(total);
+  var pos = 0;
+  parts.forEach(function (p) { out.set(p, pos); pos += p.length; });
+  return out;
+};
+
+/* ---------- 导入向导（列映射） ---------- */
+var Wizard = {};
+Wizard.state = null;   // {sheets, sheetIdx, headers, rows, mapping, merge, subnetCidr}
+Wizard.open = function (file) {
+  var ext = file.name.toLowerCase().split('.').pop();
+  $('#w-err').textContent = '';
+  if (ext === 'xlsx') {
+    if (!IO.hasDecompress) {
+      toast('当前浏览器不支持 xlsx 解压，请改用 CSV 导入或升级浏览器', { err: true, ms: 6000 });
+      return;
+    }
+    var fr = new FileReader();
+    fr.onload = function () {
+      IO.Xlsx.read(fr.result).then(function (wb) {
+        Wizard.start(wb.sheets);
+      }).catch(function (e) {
+        toast('读取 xlsx 失败：' + e.message, { err: true, ms: 6000 });
+      });
+    };
+    fr.readAsArrayBuffer(file);
+  } else if (ext === 'csv') {
+    var fr2 = new FileReader();
+    fr2.onload = function () {
+      var rows = IO.csvParse(IO.decodeText(fr2.result));
+      Wizard.start([{ name: file.name, rows: rows }]);
+    };
+    fr2.readAsArrayBuffer(file);
+  } else {
+    toast('仅支持 .xlsx / .csv 文件', { err: true });
+  }
+};
+Wizard.start = function (sheets) {
+  // 过滤全空行
+  sheets = sheets.map(function (s) {
+    return { name: s.name, rows: s.rows.filter(function (r) { return r.some(function (c) { return String(c).trim() !== ''; }); }) };
+  });
+  Wizard.state = { sheets: sheets, sheetIdx: 0, mapping: null, merge: 'merge', subnetCidr: '', dateCols: {} };
+  $('#wiz').showModal();
+  if (sheets.length > 1) Wizard.stepSheet();
+  else Wizard.stepMap();
+};
+Wizard.renderSteps = function (cur) {
+  var names = Wizard.state.sheets.length > 1 ? ['选表', '映射'] : ['映射'];
+  $('#w-steps').innerHTML = names.map(function (n, i) {
+    return '<span class="' + (i === cur ? 'on' : '') + '">' + (i + 1) + ' ' + n + '</span>';
+  }).join('');
+};
+Wizard.stepSheet = function () {
+  Wizard.renderSteps(0);
+  var st = Wizard.state;
+  $('#w-body').innerHTML = '<div class="hint">该文件包含多个工作表，请选择要导入的表：</div>'
+    + '<div class="map-grid">' + st.sheets.map(function (s, i) {
+      return '<label class="sheet-option"><input type="radio" name="w-sheet" value="' + i + '"' + (i === st.sheetIdx ? ' checked' : '') + '> ' + esc(s.name) + '（' + s.rows.length + ' 行）</label>';
+    }).join('') + '</div>';
+  var foot = $('#w-foot');
+  foot.innerHTML = '';
+  var cancel = document.createElement('button');
+  cancel.className = 'btn'; cancel.textContent = '取消';
+  cancel.onclick = function () { $('#wiz').close(); };
+  var next = document.createElement('button');
+  next.className = 'btn primary'; next.textContent = '下一步';
+  next.onclick = function () {
+    var sel = document.querySelector('input[name="w-sheet"]:checked');
+    if (sel) { st.sheetIdx = +sel.value; Wizard.stepMap(); }
+  };
+  foot.appendChild(cancel); foot.appendChild(next);
+};
+Wizard.autoMap = function (headers) {
+  // 表头关键词自动猜测映射
+  var guess = {};
+  var rules = [
+    [/^ip$|ip地址|^地址$|ip addr/i, 'ip'],
+    [/主机名|hostname|域名|domain/i, 'hostname'],
+    [/设备名|名称|name|设备/i, 'name'],
+    [/管理ip|管理|mgmt|管理地址/i, 'mgmtIp'],
+    [/接口|port|iface|interface/i, 'iface'],
+    [/mac|物理地址/i, 'mac'],
+    [/用途|目的|用途说明|purpose|描述/i, 'purpose'],
+    [/类型|设备类型|type|device/i, 'deviceType'],
+    [/备注|说明|note|remark|comment/i, 'note'],
+    [/状态|status/i, 'status'],
+    [/网段|cidr|subnet|vlan/i, 'subnet']
+  ];
+  headers.forEach(function (h, i) {
+    if (!h) return;
+    for (var r = 0; r < rules.length; r++) {
+      if (rules[r][0].test(String(h).trim())) {
+        if (!(rules[r][1] in guess) && rules[r][1] !== 'ip' || !(rules[r][1] in guess)) {
+          guess[rules[r][1]] = i;
+        }
+        break;
+      }
+    }
+  });
+  return guess;
+};
+Wizard.stepMap = function () {
+  Wizard.renderSteps(Wizard.state.sheets.length > 1 ? 1 : 0);
+  var st = Wizard.state;
+  var sheet = st.sheets[st.sheetIdx];
+  var rows = sheet.rows;
+  if (!rows.length) { $('#w-err').textContent = '该表没有数据行'; return; }
+  var headers = rows[0].map(function (h) { return String(h || '').trim(); });
+  st.headers = headers;
+  st.dataRows = rows.slice(1);
+  st.preview = rows.slice(0, 11);
+
+  // colmap 自动应用
+  var cm = Data.loadColmap();
+  if (cm && JSON.stringify(cm.headers) === JSON.stringify(headers) && cm.mapping && cm.mapping.ip != null) {
+    st.mapping = Object.assign({}, cm.mapping);
+    Wizard.confirmAuto();
+    return;
+  }
+  st.mapping = Wizard.autoMap(headers);
+  Wizard.renderMapUI();
+};
+Wizard.confirmAuto = function () {
+  var st = Wizard.state;
+  Dialog.confirm('应用已保存的映射', '检测到与上次相同的表头，是否直接应用已保存的列映射？<div class="dialog-hint">IP → ' + esc(st.headers[st.mapping.ip] || '?') + '</div>', function () {
+    Wizard.stepMerge();
+  }, '应用', '重新映射', function () {
+    Wizard.renderMapUI();
+  });
+};
+var Rules = {};
+Rules.editorHtml = function (prefix, details) {
+  var kw = Data.loadKeywords();
+  var stOpts = function (sel) {
+    return STATUS_ORDER.map(function (s) {
+      return '<option value="' + s + '"' + (sel === s ? ' selected' : '') + '>' + STATUS_LABEL[s] + '</option>';
+    }).join('');
+  };
+  var rows = kw.map(function (r) {
+    return '<div class="kw-row"><input class="kw-pat" value="' + esc(r[0].source) + '" placeholder="关键词（正则）">'
+      + '<select class="kw-st">' + stOpts(r[1]) + '</select>'
+      + '<button type="button" class="kw-del" data-rules-action="delete" title="删除规则">✕</button></div>';
+  }).join('');
+  var body = '<div data-rules-root="' + prefix + '">'
+    + '<div id="' + prefix + '-editor" data-rules-editor>' + rows + '</div>'
+    + '<div class="rules-actions">'
+    + '<button type="button" class="btn" data-rules-action="add">＋ 加规则</button>'
+    + '<button type="button" class="btn" data-rules-action="save">保存规则</button>'
+    + '<span class="rules-message" data-rules-msg></span>'
+    + '</div>'
+    + '<div class="hint rules-hint">未匹配任何规则的值默认按「已分配」处理。英文关键词（assigned/reserved/conflict 等）始终优先识别。</div>'
+    + '</div>';
+  return details ? '<details class="rules-disclosure"><summary>状态关键词规则（' + kw.length + ' 条，点开编辑）</summary>' + body + '</details>' : body;
+};
+Rules.collect = function (root) {
+  var rules = [], bad = false;
+  root.querySelectorAll('.kw-row').forEach(function (r) {
+    var p = r.querySelector('.kw-pat').value.trim();
+    var stv = r.querySelector('.kw-st').value;
+    r.querySelector('.kw-pat').style.borderColor = '';
+    if (!p) return;
+    try { rules.push([new RegExp(p, 'i'), stv]); }
+    catch (e) { bad = true; r.querySelector('.kw-pat').style.borderColor = 'var(--st-conflict)'; }
+  });
+  return { rules: rules, bad: bad };
+};
+Rules.save = function (root) {
+  var result = Rules.collect(root);
+  var msg = root.querySelector('[data-rules-msg]');
+  if (result.bad) { msg.textContent = '有正则语法错误，未保存'; return; }
+  Data.saveKeywords(result.rules);
+  msg.textContent = '已保存 ' + result.rules.length + ' 条规则';
+  if (root.dataset.rulesRoot === 'global-rules') toast('状态映射规则已保存');
+};
+Rules.open = function () {
+  var dlg = $('#rules');
+  $('#rules-body').innerHTML = Rules.editorHtml('global-rules', false);
+  var foot = $('#rules-foot');
+  foot.innerHTML = '';
+  var close = document.createElement('button');
+  close.className = 'btn primary'; close.textContent = '完成';
+  close.onclick = function () { dlg.close(); };
+  foot.appendChild(close);
+  dlg.showModal();
+};
+Wizard.renderKeywordEditor = function () { return Rules.editorHtml('kw', true); };
+// 规则编辑器交互：向导和全局入口共用同一套持久化规则
+document.addEventListener('click', function (ev) {
+  var action = ev.target.closest('[data-rules-action]');
+  if (!action) return;
+  var root = action.closest('[data-rules-root]');
+  if (!root) return;
+  if (action.dataset.rulesAction === 'add') {
+    var row = document.createElement('div');
+    row.className = 'kw-row';
+    row.innerHTML = '<input class="kw-pat" placeholder="关键词（正则）"><select class="kw-st">'
+      + STATUS_ORDER.map(function (s) { return '<option value="' + s + '">' + STATUS_LABEL[s] + '</option>'; }).join('')
+      + '</select><button type="button" class="kw-del" data-rules-action="delete" title="删除规则">✕</button>';
+    root.querySelector('[data-rules-editor]').appendChild(row);
+    row.querySelector('.kw-pat').focus();
+  } else if (action.dataset.rulesAction === 'save') {
+    Rules.save(root);
+  } else if (action.dataset.rulesAction === 'delete') {
+    action.closest('.kw-row').remove();
+  }
+});
+Wizard.renderMapUI = function () {
+  var st = Wizard.state;
+  var opts = function (selected) {
+    return '<option value="">（未映射）</option>' + st.headers.map(function (h, i) {
+      return '<option value="' + i + '"' + (selected === i ? ' selected' : '') + '>' + esc(h || ('列' + (i + 1))) + '</option>';
+    }).join('');
+  };
+  var rowsHtml = IMPORT_TARGETS.map(function (t) {
+    if (t[0] === '_ignore') return '';
+    var cur = st.mapping[t[0]];
+    var sel = (cur == null ? '' : cur);
+    return '<div class="map-row"><label>' + t[1] + '</label><select data-target="' + t[0] + '">' + opts(sel) + '</select></div>';
+  }).join('');
+  var subnets = Store.state.data.subnets.map(function (s) {
+    return '<option value="' + esc(s.cidr) + '"' + (st.subnetCidr === s.cidr ? ' selected' : '') + '>' + esc(s.name + '（' + s.cidr + '）') + '</option>';
+  }).join('');
+  $('#w-body').innerHTML =
+    '<div class="hint">文件「' + esc(st.sheets[st.sheetIdx].name) + '」：' + st.dataRows.length + ' 行数据。请将文件列映射到目标字段（IP 为必选）：</div>'
+    + '<table class="preview"><tr>' + st.preview[0].map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr>'
+    + st.preview.slice(1).map(function (r) {
+      return '<tr>' + st.headers.map(function (h, i) { return '<td>' + esc(r[i] == null ? '' : r[i]) + '</td>'; }).join('') + '</tr>';
+    }).join('') + '</table>'
+    + '<div class="map-grid">' + rowsHtml + '</div>'
+    + '<div class="map-row subnet-target"><label>导入到网段</label><select id="w-subnet"><option value="">（按「所属网段」列自动）</option>' + subnets + '</select></div>'
+    + '<div class="hint">若文件包含「所属网段」列且选择自动，将按该列分组导入（不存在的网段会自动创建）。</div>'
+    + Wizard.renderKeywordEditor();
+  // 恢复已选
+  $('#w-body').querySelectorAll('select[data-target]').forEach(function (sel) {
+    sel.value = st.mapping[sel.dataset.target] == null ? '' : st.mapping[sel.dataset.target];
+  });
+  $('#w-subnet').value = st.subnetCidr || '';
+  var foot = $('#w-foot');
+  foot.innerHTML = '';
+  var back = document.createElement('button');
+  back.className = 'btn'; back.textContent = '上一步';
+  back.onclick = function () { Wizard.state.sheets.length > 1 ? Wizard.stepSheet() : $('#wiz').close(); };
+  var next = document.createElement('button');
+  next.className = 'btn primary'; next.textContent = '下一步';
+  next.onclick = Wizard.collectMap;
+  foot.appendChild(back); foot.appendChild(next);
+};
+Wizard.collectMap = function () {
+  var st = Wizard.state;
+  var m = {};
+  var ok = true;
+  $('#w-body').querySelectorAll('select[data-target]').forEach(function (sel) {
+    var t = sel.dataset.target;
+    if (sel.value === '') return;
+    if (t === '_note') return; // 多列可并入，单独收集
+    m[t] = +sel.value;
+  });
+  if (m.ip == null) {
+    $('#w-err').textContent = '「IP 地址」为必选映射字段';
+    return;
+  }
+  // “并入备注”列：可多选，拼接进 note
+  st.noteCols = [];
+  $('#w-body').querySelectorAll('select[data-target="_note"]').forEach(function (sel) {
+    if (sel.value !== '') st.noteCols.push(+sel.value);
+  });
+  st.mapping = m;
+  st.subnetCidr = $('#w-subnet').value;
+  // 持久化 colmap（含表头指纹）
+  Data.saveColmap({ headers: st.headers, mapping: m, savedAt: nowIso() });
+  Wizard.stepMerge();
+};
+Wizard.stepMerge = function () {
+  var st = Wizard.state;
+  Wizard.renderSteps(st.sheets.length > 1 ? 1 : 0);
+  $('#w-body').innerHTML =
+    '<div class="map-row"><label>合并策略</label><select id="w-merge">'
+    + '<option value="merge"' + (st.merge === 'merge' ? ' selected' : '') + '>合并（导入的非空字段覆盖现有登记）</option>'
+    + '<option value="skip"' + (st.merge === 'skip' ? ' selected' : '') + '>跳过已登记 IP</option>'
+    + '</select></div>'
+    + '<div class="hint">即将导入 <b>' + st.dataRows.length + '</b> 行到' + (st.subnetCidr ? '网段 <b>' + esc(st.subnetCidr) + '</b>' : '各「所属网段」列对应网段') + '。</div>';
+  var foot = $('#w-foot');
+  foot.innerHTML = '';
+  var back = document.createElement('button');
+  back.className = 'btn'; back.textContent = '上一步';
+  back.onclick = Wizard.renderMapUI;
+  var run = document.createElement('button');
+  run.className = 'btn primary'; run.textContent = '开始导入';
+  run.onclick = Wizard.run;
+  foot.appendChild(back); foot.appendChild(run);
+};
+Wizard.run = function () {
+  var st = Wizard.state;
+  st.merge = $('#w-merge') ? $('#w-merge').value : 'merge';
+  var m = st.mapping;
+  var kw = Data.loadKeywords();
+  var stats = { added: 0, updated: 0, skipped: 0, outOfRange: [], newSubnets: 0, badIp: 0 };
+  Data.backupCurrent();
+
+  st.dataRows.forEach(function (row) {
+    var get = function (key) {
+      var i = m[key];
+      return i == null ? '' : String(row[i] == null ? '' : row[i]).trim();
+    };
+    var ipStr = get('ip');
+    if (!ipStr) { stats.badIp++; return; }
+    var rec = { name: get('name'), hostname: get('hostname'), mgmtIp: get('mgmtIp'), iface: get('iface'), mac: get('mac'), purpose: get('purpose'), deviceType: get('deviceType'), note: get('note'), status: get('status') };
+    // 「并入备注」列：以「表头: 值」拼接进 note
+    if (st.noteCols && st.noteCols.length) {
+      var extra = st.noteCols.map(function (ci) {
+        var h = st.headers[ci] || ('列' + (ci + 1));
+        var v = String(row[ci] == null ? '' : row[ci]).trim();
+        return v ? h + ': ' + v : '';
+      }).filter(Boolean).join('；');
+      if (extra) rec.note = rec.note ? rec.note + '；' + extra : extra;
+    }
+    // 状态归一（使用可编辑规则表）
+    if (rec.status) {
+      var low = rec.status.toLowerCase();
+      var mapped = null;
+      if (/assigned|used|active/.test(low)) mapped = 'assigned';
+      else if (/reserved/.test(low)) mapped = 'reserved';
+      else if (/conflict|error/.test(low)) mapped = 'conflict';
+      else {
+        for (var r = 0; r < kw.length; r++) {
+          if (kw[r][0].test(rec.status)) { mapped = kw[r][1]; break; }
+        }
+      }
+      rec.status = mapped || 'assigned';
+    }
+    // 设备类型中文 → key
+    if (rec.deviceType) {
+      var hit = null;
+      Object.keys(DEVTYPE_LABEL).forEach(function (k) {
+        if (DEVTYPE_LABEL[k] && DEVTYPE_LABEL[k] === rec.deviceType) hit = k;
+      });
+      rec.deviceType = hit || (DEVTYPE_LABEL[rec.deviceType] ? rec.deviceType : 'other');
+    }
+    // 确定目标网段
+    var cidr = st.subnetCidr || get('subnet');
+    if (!cidr) { stats.outOfRange.push(ipStr + '（未指定网段）'); return; }
+    var subnet = null;
+    for (var i = 0; i < Store.state.data.subnets.length; i++) {
+      if (Store.state.data.subnets[i].cidr === cidr) { subnet = Store.state.data.subnets[i]; break; }
+    }
+    if (!subnet) {
+      try {
+        var norm = Calc.normalizeCidr(cidr);
+        subnet = { id: uid('snt'), name: norm, cidr: norm, vlan: '', note: '导入自动创建', createdAt: nowIso(), updatedAt: nowIso(), ips: {} };
+        Store.state.data.subnets.push(subnet);
+        stats.newSubnets++;
+      } catch (e) {
+        stats.outOfRange.push(ipStr + '（网段「' + cidr + '」无效）');
+        return;
+      }
+    }
+    var info;
+    try { info = Calc.parseCidr(subnet.cidr); } catch (e) { stats.outOfRange.push(ipStr); return; }
+    // IP 可能带掩码（192.168.1.5/24）
+    ipStr = ipStr.split('/')[0].trim();
+    if (Calc.idxOfIp(ipStr, info.network, info.broadcast) < 0) {
+      stats.outOfRange.push(ipStr + '（不属于 ' + subnet.cidr + '）');
+      return;
+    }
+    var exist = subnet.ips[ipStr];
+    if (exist && st.merge === 'skip') { stats.skipped++; return; }
+    var patch = {};
+    ['name', 'hostname', 'mgmtIp', 'iface', 'mac', 'purpose', 'deviceType', 'note'].forEach(function (f) {
+      if (rec[f]) patch[f] = rec[f];
+    });
+    patch.status = rec.status || (exist ? exist.status : 'assigned');
+    var merged = Object.assign({}, exist || {}, patch);
+    var hasField = FIELDS.some(function (f) { return merged[f]; });
+    if (hasField || (merged.status && merged.status !== 'free')) {
+      merged.updatedAt = nowIso();
+      subnet.ips[ipStr] = merged;
+      if (exist) stats.updated++; else stats.added++;
+    }
+  });
+
+  Store.persist();
+  Store.emit();
+  $('#wiz').close();
+  var msg = '导入完成：新增 ' + stats.added + '，更新 ' + stats.updated
+    + (stats.skipped ? '，跳过 ' + stats.skipped : '')
+    + (stats.newSubnets ? '，新建网段 ' + stats.newSubnets : '')
+    + (stats.badIp ? '，无效行 ' + stats.badIp : '');
+  if (stats.outOfRange.length) {
+    msg += '，越界/异常 ' + stats.outOfRange.length + ' 条';
+  }
+  toast(msg, { err: stats.outOfRange.length > 0, ms: 6000 });
+  // 明细报告：越界/异常行可查看并复制
+  if (stats.outOfRange.length || stats.badIp) {
+    var lines = stats.outOfRange.slice();
+    if (stats.badIp) lines.push('（另有 ' + stats.badIp + ' 行 IP 列为空，已忽略）');
+    var detail = lines.join('\n');
+    Dialog.confirm('导入明细：' + lines.length + ' 条未导入',
+      '<div class="import-report-label">以下行未导入（越界/网段无效/IP 为空）：</div>'
+      + '<pre id="io-detail" class="import-report">' + esc(detail) + '</pre>',
+      function () {
+        var text = $('#io-detail').textContent;
+        var done = function () { toast('明细已复制到剪贴板'); };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () { IO.fallbackCopy(text); done(); });
+        else { IO.fallbackCopy(text); done(); }
+      }, '复制全部');
+  }
+};
+IO.fallbackCopy = function (text) {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;opacity:0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch (e) {}
+  ta.remove();
+};
+
+/* ============================================================
+ * [10] Events —— 事件层（document 级事件委托）
+ * ============================================================ */
+var Events = {};
+Events.init = function () {
+  document.addEventListener('click', function (ev) {
+    var el = ev.target.closest('[data-action]');
+    if (!el) return;
+    var act = el.dataset.action;
+    var id = el.dataset.id;
+    try {
+      switch (act) {
+        case 'subnet-select': Store.act('subnet-select', id); break;
+        case 'add-subnet': Dialog.promptSubnet(); break;
+        case 'subnet-edit': ev.stopPropagation(); Dialog.promptSubnet(id); break;
+        case 'subnet-delete': ev.stopPropagation(); Events.deleteSubnet(id); break;
+        case 'open-ip': Panel.open(el.dataset.ip); break;
+        case 'close-panel': Store.act('close-panel'); Panel.render(); break;
+        case 'panel-save': Panel.save(); break;
+        case 'panel-prev': Panel.step(-1); break;
+        case 'panel-next': Panel.step(1); break;
+        case 'panel-clear': Panel.clear(); break;
+        case 'toggle-theme': Store.act('toggle-theme'); break;
+        case 'filter': Store.act('set-filter', el.dataset.st === Store.state.ui.statusFilter ? '' : el.dataset.st); break;
+        case 'export-json': IO.exportJSON(); break;
+        case 'import-json': Events.pickFile('.json', function (f) { IO.importJSON(f); }); break;
+        case 'import-table':
+          if (!IO.hasDecompress) toast('当前浏览器不支持 xlsx 解压，仅可导入 CSV；JSON 备份仍可用', { err: true, ms: 5000 });
+          Events.pickFile(IO.tableImportAccept(), function (f) { Wizard.open(f); });
+          break;
+        case 'status-rules': Rules.open(); break;
+        case 'export-table': Events.exportTableMenu(ev); break;
+        case 'restore-backup':
+          Dialog.confirm('恢复备份', '将恢复到最近一次导入/恢复前的数据。继续？', function () { Data.restoreBackup(); }, '恢复');
+          break;
+      }
+    } catch (e) {
+      if (e instanceof CalcError || e.name === 'CalcError') toast(e.message, { err: true });
+      else { console.error(e); toast('操作失败：' + (e.message || e), { err: true }); }
+    }
+  });
+  // 状态分段按钮（点即存）
+  $('#p-status').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button[data-st]');
+    if (b) Panel.quickStatus(b.dataset.st);
+  });
+  // 工具条
+  $('#density').addEventListener('change', function (e) { Store.act('set-density', e.target.value); });
+  $('#fontscale').addEventListener('change', function (e) { Store.act('set-font', e.target.value); });
+  // 网段排序
+  var sortSel = $('#subnet-sort');
+  sortSel.value = Store.state.settings.subnetSort || 'created';
+  sortSel.addEventListener('change', function (e) {
+    Store.state.settings.subnetSort = e.target.value;
+    Data.saveSettings();
+    Render.subnetList();
+  });
+  // 格子多选（Ctrl/Shift + 左键）与右键菜单（事件委托在 #grid 上）
+  var grid = $('#grid');
+  grid.addEventListener('click', function (ev) {
+    var cell = ev.target.closest('.cell[data-ip]');
+    if (!cell) return;
+    if (ev.ctrlKey || ev.metaKey || ev.shiftKey) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      Batch.toggle(cell.dataset.ip, ev.shiftKey ? 'range' : 'single');
+      $('#ctx-menu').classList.remove('open');
+    }
+    // 普通左键由 document 委托的 open-ip 处理；批量模式下点击单格也加入选择
+    else if (Batch.sel.length) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      Batch.toggle(cell.dataset.ip, 'single');
+    }
+  });
+  grid.addEventListener('contextmenu', function (ev) {
+    var cell = ev.target.closest('.cell[data-ip]');
+    if (!cell) return;
+    ev.preventDefault();
+    var ip = cell.dataset.ip;
+    // 右键未选中的格且已有批量选择 → 把该格并入
+    if (Batch.sel.length && Batch.sel.indexOf(ip) < 0) { Batch.sel.push(ip); Batch.paint(); Batch.bar(); }
+    Batch.menu(ev, ip);
+  });
+  document.addEventListener('click', function (ev) {
+    var menu = $('#ctx-menu');
+    if (menu.classList.contains('open') && !ev.target.closest('#ctx-menu')) menu.classList.remove('open');
+  });
+  // 批量条
+  $('#batch-status').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button[data-st]');
+    if (b) Batch.apply(b.dataset.st);
+  });
+  $('#batch-cancel').addEventListener('click', function () { Batch.clear(); });
+  // 搜索
+  var search = $('#search');
+  search.addEventListener('input', debounce(function () {
+    Store.state.ui.search = search.value;
+    Render.content();
+  }, 120));
+  // 键盘
+  document.addEventListener('keydown', function (ev) {
+    if (!$('#panel').classList.contains('open')) return;
+    if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA' || ev.target.tagName === 'SELECT') return;
+    if (ev.key === 'Escape') { Store.act('close-panel'); Panel.render(); }
+    else if (ev.key === 'ArrowLeft') Panel.step(-1);
+    else if (ev.key === 'ArrowRight') Panel.step(1);
+    else if (ev.key === 'ArrowUp') Panel.step(-1);
+    else if (ev.key === 'ArrowDown') Panel.step(1);
+  });
+  // 双标签页防护
+  window.addEventListener('storage', function (ev) {
+    if (ev.key === LS.data) {
+      toast('数据已在其他窗口被修改，建议刷新页面加载最新数据', { ms: 8000, action: '刷新', onAction: function () { location.reload(); } });
+    }
+  });
+};
+Events.deleteSubnet = function (id) {
+  var s = Store.findSubnet(id);
+  if (!s) return;
+  var n = Object.keys(s.ips).length;
+  Dialog.confirm('删除网段', '确定删除 <b>' + esc(s.name) + '（' + esc(s.cidr) + '）</b>？<br>其中 <b>' + n + '</b> 条登记记录将一并删除，此操作不可撤销。', function () {
+    Store.act('subnet-delete', id);
+  }, '删除');
+};
+Events.pickFile = function (accept, cb) {
+  var inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = accept;
+  inp.onchange = function () { if (inp.files[0]) cb(inp.files[0]); };
+  inp.click();
+};
+Events.exportTableMenu = function (ev) {
+  // 简单二选一菜单：xlsx / csv
+  var m = document.createElement('div');
+  m.className = 'export-menu';
+  m.setAttribute('role', 'menu');
+  var mk = function (label, fn) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'export-menu-item';
+    b.setAttribute('role', 'menuitem');
+    b.textContent = label;
+    b.onclick = function () { m.remove(); fn(); };
+    m.appendChild(b);
+  };
+  mk('导出为 Excel (.xlsx)', function () { IO.exportTable('xlsx'); });
+  mk('导出为 CSV (.csv)', function () { IO.exportTable('csv'); });
+  document.body.appendChild(m);
+  var r = ev.target.getBoundingClientRect();
+  m.style.left = Math.min(r.left, window.innerWidth - 180) + 'px';
+  m.style.top = (r.bottom + 4) + 'px';
+  setTimeout(function () {
+    document.addEventListener('click', function h() { m.remove(); document.removeEventListener('click', h); });
+  }, 0);
+};
+
+/* ============================================================
+ * [11] Selftest —— 内建自测（?selftest）
+ * ============================================================ */
+function runSelftest() {
+  var cases = [];
+  function t(name, fn) {
+    try { fn(); cases.push([name, true, '']); }
+    catch (e) { cases.push([name, false, e.message]); }
+  }
+  function eq(a, b, msg) { if (a !== b) throw new Error((msg || '') + ' 期望 ' + b + ' 实际 ' + a); }
+
+  t('ipToUint 基本', function () { eq(Calc.ipToUint('192.168.1.1'), 3232235777); });
+  t('ipToUint 边界 255', function () { eq(Calc.ipToUint('255.255.255.255'), 4294967295); });
+  t('ipToUint 非法', function () { eq(Calc.ipToUint('256.1.1.1'), null); });
+  t('uintToIp 往返', function () { eq(Calc.uintToIp(Calc.ipToUint('10.0.0.201')), '10.0.0.201'); });
+  t('uintToIp 最大', function () { eq(Calc.uintToIp(4294967295), '255.255.255.255'); });
+  t('parseCidr /24', function () {
+    var r = Calc.parseCidr('192.168.10.0/24');
+    eq(r.network, Calc.ipToUint('192.168.10.0'));
+    eq(r.broadcast, Calc.ipToUint('192.168.10.255'));
+    eq(r.total, 256);
+  });
+  t('parseCidr 主机位规范化', function () {
+    var r = Calc.parseCidr('192.168.10.77/24');
+    eq(r.network, Calc.ipToUint('192.168.10.0'));
+    eq(r.hostBitsNonzero, true);
+  });
+  t('parseCidr /30', function () {
+    var r = Calc.parseCidr('10.0.0.4/30');
+    eq(r.total, 4);
+    eq(Calc.uintToIp(r.broadcast), '10.0.0.7');
+  });
+  t('parseCidr /31', function () {
+    var r = Calc.parseCidr('10.0.0.0/31');
+    eq(r.total, 2);
+    eq(Calc.roleOf(0, 2, 31), 'host');
+    eq(Calc.roleOf(1, 2, 31), 'host');
+  });
+  t('parseCidr /32', function () {
+    var r = Calc.parseCidr('10.0.0.5/32');
+    eq(r.total, 1);
+    eq(Calc.roleOf(0, 1, 32), 'host');
+  });
+  t('parseCidr /0', function () {
+    var r = Calc.parseCidr('0.0.0.0/0');
+    eq(r.total, 4294967296);
+    eq(r.mask, 0);
+  });
+  t('parseCidr 非法格式', function () {
+    var threw = false;
+    try { Calc.parseCidr('abc'); } catch (e) { threw = true; }
+    eq(threw, true);
+  });
+  t('roleOf 网络/广播', function () {
+    eq(Calc.roleOf(0, 256, 24), 'network');
+    eq(Calc.roleOf(255, 256, 24), 'broadcast');
+    eq(Calc.roleOf(1, 256, 24), 'host');
+  });
+  t('usableCount', function () {
+    eq(Calc.usableCount(256, 24), 254);
+    eq(Calc.usableCount(2, 31), 2);
+    eq(Calc.usableCount(1, 32), 1);
+  });
+  t('idxToIp', function () {
+    eq(Calc.idxToIp(Calc.ipToUint('192.168.10.0'), 17), '192.168.10.17');
+    eq(Calc.idxToIp(Calc.ipToUint('10.0.0.255'), 1), '10.0.1.0');
+  });
+  t('idxOfIp / 越界', function () {
+    var net = Calc.ipToUint('192.168.10.0');
+    var bc = Calc.ipToUint('192.168.10.255');
+    eq(Calc.idxOfIp('192.168.10.5', net, bc), 5);
+    eq(Calc.idxOfIp('192.168.11.5', net, bc), -1);
+  });
+  t('normalizeCidr', function () { eq(Calc.normalizeCidr('192.168.10.77/24'), '192.168.10.0/24'); });
+  t('inSubnet 边界', function () {
+    var net = Calc.ipToUint('10.0.0.0'), bc = Calc.ipToUint('10.0.0.7');
+    eq(Calc.inSubnet('10.0.0.0', net, bc), true);
+    eq(Calc.inSubnet('10.0.0.7', net, bc), true);
+    eq(Calc.inSubnet('10.0.0.8', net, bc), false);
+  });
+  t('crc32 已知向量', function () {
+    var u8 = new TextEncoder().encode('123456789');
+    eq(IO.Xlsx.crc32(u8), 0xCBF43926);
+  });
+  t('crc32 空', function () { eq(IO.Xlsx.crc32(new Uint8Array(0)), 0); });
+  t('CSV 引号转义', function () {
+    var rows = IO.csvParse('a,"b,c","d""e""",\r\n1,2,3,4');
+    eq(JSON.stringify(rows[0]), JSON.stringify(['a', 'b,c', 'd"e"', '']));
+    eq(JSON.stringify(rows[1]), JSON.stringify(['1', '2', '3', '4']));
+  });
+  t('CSV 引号内换行', function () {
+    var rows = IO.csvParse('"x\ny",z');
+    eq(rows.length, 1);
+    eq(rows[0][0], 'x\ny');
+  });
+  t('csvEncode 往返', function () {
+    var orig = [['a,b', 'c"d', 'e']];
+    var parsed = IO.csvParse(IO.csvEncode(orig));
+    eq(JSON.stringify(parsed), JSON.stringify(orig));
+  });
+  t('colToIdx / idxToCol 往返', function () {
+    eq(IO.Xlsx.idxToCol(0), 'A');
+    eq(IO.Xlsx.idxToCol(25), 'Z');
+    eq(IO.Xlsx.idxToCol(26), 'AA');
+    eq(IO.Xlsx.colToIdx('AA'), 26);
+  });
+  t('zip 头签名', function () {
+    var zip = IO.Xlsx.zipStore([['a.txt', 'hello']]);
+    var dv = new DataView(zip.buffer);
+    eq(dv.getUint32(0, true), 0x04034b50);
+    eq(dv.getUint32(zip.length - 22, true), 0x06054b50);
+  });
+  t('zip 内容往返（parseZip 读取 STORE）', function () {
+    var zip = IO.Xlsx.zipStore([['a.txt', 'hello world']]);
+    return Promise.resolve(IO.Xlsx.parseZip(zip)).then(function (entries) {
+      if (!entries.length || entries[0].name !== 'a.txt') throw new Error('条目名不符');
+      if (new TextDecoder().decode(entries[0].data) !== 'hello world') throw new Error('内容不符');
+    });
+  });
+  t('sheetXml 结构', function () {
+    var xml = IO.Xlsx.sheetXml([['IP', '设备'], ['10.0.0.1', '路由器']]);
+    if (xml.indexOf('t="inlineStr"') < 0) throw new Error('缺 inlineStr');
+    if (xml.indexOf('路由器') < 0) throw new Error('缺中文内容');
+  });
+  t('esc 转义', function () { eq(esc('<b a="1">&\'</b>'), '&lt;b a=&quot;1&quot;&gt;&amp;&#39;&lt;/b&gt;'); });
+  t('STATUS 关键词归一', function () {
+    eq(/分配|在用|使用|占用|在线/.test('已分配'), true);
+    eq(/预留|保留/.test('已预留'), true);
+    eq(/冲突|异常|故障/.test('地址冲突'), true);
+  });
+  t('主机名列自动映射', function () {
+    var m = Wizard.autoMap(['IP', '设备名称', 'Hostname']);
+    eq(m.hostname, 2);
+    eq(m.name, 1);
+  });
+  t('导出包含主机名列', function () {
+    eq(IO.tableHeaders().indexOf('主机名') >= 0, true);
+  });
+
+  var asyncPending = 0;
+  var done = cases.length;
+  var html = '<h3>IPViewer 自测</h3>';
+  cases.forEach(function (c) {
+    html += '<div class="' + (c[1] ? 'pass' : 'fail') + '">' + (c[1] ? '✓' : '✗') + ' ' + esc(c[0]) + (c[1] ? '' : ' — ' + esc(c[2])) + '</div>';
+  });
+  var pass = cases.filter(function (c) { return c[1]; }).length;
+  html += '<h3>' + pass + ' / ' + cases.length + ' 通过</h3>';
+  // 异步用例结果由 Promise 追加
+  var box = document.createElement('div');
+  box.id = 'selftest';
+  box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:var(--panel);color:var(--text);padding:20px;overflow:auto;max-height:70vh;border-bottom:3px solid var(--accent);font-family:Consolas,monospace;font-size:13px';
+  box.innerHTML = html;
+  document.body.appendChild(box);
+  // 处理返回 Promise 的用例（zip 往返）
+  cases.forEach(function (c, idx) { /* 同步结果已渲染 */ });
+  // 重新跑异步断言并补渲染
+  var asyncChecks = [];
+  asyncChecks.push(new Promise(function (res) {
+    var zip = IO.Xlsx.zipStore([['a.txt', 'hello world']]);
+    IO.Xlsx.parseZip(zip).then(function (entries) {
+      var ok = entries.length === 1 && entries[0].name === 'a.txt' && new TextDecoder().decode(entries[0].data) === 'hello world';
+      appendResult('zip STORE 往返（异步）', ok);
+      res();
+    }).catch(function (e) { appendResult('zip STORE 往返（异步）', false, e.message); res(); });
+  }));
+  function appendResult(name, ok, msg) {
+    var box = $('#selftest');
+    var div = document.createElement('div');
+    div.className = ok ? 'pass' : 'fail';
+    div.textContent = (ok ? '✓' : '✗') + ' ' + name + (ok ? '' : ' — ' + msg);
+    box.appendChild(div);
+  }
+  Promise.all(asyncChecks).then(function () {
+    var box = $('#selftest');
+    var all = box.querySelectorAll('.pass').length, tot = box.querySelectorAll('.pass,.fail').length;
+    var h = box.querySelector('h3:last-of-type') || box.querySelector('h3');
+    box.querySelectorAll('h3')[1].textContent = all + ' / ' + tot + ' 通过';
+  });
+}
+
+/* ============================================================
+ * [12] App —— 启动
+ * ============================================================ */
+function boot() {
+  // 旧内核检测
+  if (typeof Promise === 'undefined' || !document.createElement('dialog').showModal) {
+    document.body.innerHTML = '<div style="padding:40px;text-align:center;font-size:16px">当前浏览器内核过旧，请使用 <b>Microsoft Edge</b> 或 Chrome 打开本工具。</div>';
+    return;
+  }
+  Store.init();
+  IO.updateCompatibilityUI();
+  // 应用设置
+  document.documentElement.style.setProperty('--cols', Store.state.settings.density);
+  document.documentElement.style.setProperty('--cell-font', Store.state.settings.fontScale + 'px');
+  $('#density').value = Store.state.settings.density;
+  $('#fontscale').value = Store.state.settings.fontScale;
+  Events.init();
+  Store.sub(function () { Render.all(); Panel.render(); });
+  Render.all();
+
+  // ?selftest
+  if (location.search.indexOf('selftest') >= 0) {
+    runSelftest();
+    // 自测模式下暴露内部句柄供自动化验证
+    window.__test = { Store: Store, Render: Render, Panel: Panel, IO: IO, Data: Data, Calc: Calc, Wizard: Wizard, Rules: Rules };
+  }
+}
+boot();
+
+})();
+</script>
+</body>
+</html>
