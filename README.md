@@ -63,6 +63,32 @@ python -m http.server 8000
 
 NetBox 配置需允许 `http://localhost:8000`，再在页面输入 NetBox 地址和 API Token。Token 只保存在当前页面内存，不会写入 `localStorage` 或 JSON 备份；不要将 `CORS_ORIGIN_ALLOW_ALL` 用作生产配置。双击 `file://` 打开时，浏览器通常会因来源和 CORS 限制无法访问 NetBox API。
 
+### Cloudflare Worker 代理（推荐用于官方 Demo）
+
+如果 `demo.netbox.dev` 没有允许你的 Pages 域名跨源访问，使用仓库内的 `worker/` 代理：
+
+1. 安装 Node.js 18+，进入 `worker/` 后执行 `npm install`。
+2. 编辑 `worker/wrangler.jsonc`：
+   - `ALLOWED_ORIGINS` 填 Pages 的精确来源，例如 `https://your-project.pages.dev`；本地调试时可保留 `http://localhost:8000`。
+   - `ALLOWED_NETBOX_ORIGINS` 填允许的 NetBox 来源，例如 `https://demo.netbox.dev`。多个来源用英文逗号分隔。
+3. 登录 Cloudflare 后部署：
+
+```bash
+cd worker
+npx wrangler login
+npx wrangler deploy
+```
+
+4. 复制部署得到的 `https://ipviewer-netbox-proxy.<account>.workers.dev` 地址。
+5. 在页面「导入 NetBox」中填写：
+   - NetBox 地址：`https://demo.netbox.dev`
+   - Worker 代理地址：上一步得到的 Worker 地址
+   - 官方 Demo 账号创建的 API Token
+
+代理只允许配置的来源、HTTPS NetBox 域名和 `/api/` 路径，并且只转发 `GET`、`POST`、`PATCH`。Token 从浏览器内存经 `Authorization` 头转发，不会写入 Worker 配置、日志、URL、`localStorage` 或 JSON 备份。Worker 不是 Token 保管服务；不要把 Token 固定写进 Worker。
+
+更完整的本地调试、绑定自定义域名和更新白名单说明见 [`worker/README.md`](worker/README.md)。
+
 ## 数据安全须知
 
 | 场景 | 数据是否安全 |
@@ -75,7 +101,7 @@ NetBox 配置需允许 `http://localhost:8000`，再在页面输入 NetBox 地�
 
 ## 自测
 
-在地址栏后加 `?selftest` 打开自检页面（`index.html?selftest`），自动运行 32 条断言覆盖 CIDR 计算、CSV 解析、列映射、zip/xlsx 编解码等核心逻辑。
+在地址栏后加 `?selftest` 打开自检页面（`index.html?selftest`），自动运行 37 条断言覆盖 CIDR 计算、CSV 解析、列映射、zip/xlsx 编解码、NetBox 映射与 Worker 请求配置等核心逻辑。
 
 ## 技术说明
 

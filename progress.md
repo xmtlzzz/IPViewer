@@ -21,3 +21,5 @@
 - Added NetBox mapping selftests and README guidance for HTTP serving, CORS, and token handling.
 - Completed Edge browser selftest at `35 / 35`; verified NetBox dialog at desktop and 390px viewport with no horizontal overflow and no console errors.
 - Completed cross-origin mock NetBox regression: remote reads, Prefix PATCH, IPAddress POST/PATCH, Bearer header, remote-ID persistence, and token non-persistence all passed.
+- Added optional Cloudflare Worker proxy integration: exact page-origin and NetBox-origin allowlists, `/api/` path restriction, read/write method allowlist, CORS preflight, streamed upstream responses, and no Token persistence.
+- Added Worker deployment configuration and README instructions; local Worker security matrix passed and Edge selftest passed at `37 / 37`.

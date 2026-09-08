@@ -2544,7 +2544,7 @@ IO.fallbackCopy = function (text) {
  * ============================================================ */
 var NetBox = {};
 NetBox.state = {
-  base: '', token: '', auth: 'Bearer', conflictMode: 'skip',
+  base: '', proxy: '', token: '', auth: 'Bearer', conflictMode: 'skip',
   step: 'config', message: '', messageType: '', plan: null,
   progress: '', result: null
 };
@@ -2570,8 +2570,20 @@ NetBox.normalizeBase = function (raw) {
   var path = u.pathname.replace(/\/+$/, '').replace(/\/api$/i, '');
   return u.origin + path;
 };
+NetBox.normalizeProxy = function (raw) {
+  var value = String(raw || '').trim();
+  if (!value) return '';
+  if (!/^https?:\/\//i.test(value)) throw NetBox.error('Worker 代理地址必须以 http:// 或 https:// 开头');
+  var u;
+  try { u = new URL(value); } catch (e) { throw NetBox.error('Worker 代理地址格式不正确'); }
+  if (u.username || u.password || u.search || u.hash) throw NetBox.error('Worker 代理地址不能包含账号、密码、查询参数或锚点');
+  return u.origin + u.pathname.replace(/\/+$/, '');
+};
 NetBox.apiUrl = function (path) {
   return NetBox.state.base + '/api/' + String(path || '').replace(/^\/+/, '');
+};
+NetBox.proxyUrl = function (target) {
+  return NetBox.state.proxy + '?target=' + encodeURIComponent(target);
 };
 NetBox.authHeader = function () {
   return NetBox.state.auth + ' ' + NetBox.state.token;
@@ -2602,7 +2614,8 @@ NetBox.requestAbsolute = function (url, options) {
     headers['Content-Type'] = 'application/json';
     if (typeof options.body !== 'string') options.body = JSON.stringify(options.body);
   }
-  return fetch(parsed.href, {
+  var requestUrl = NetBox.state.proxy ? NetBox.proxyUrl(parsed.href) : parsed.href;
+  return fetch(requestUrl, {
     method: options.method || 'GET', headers: headers, body: options.body,
     cache: 'no-store', credentials: 'omit'
   }).then(function (res) {
@@ -2614,7 +2627,9 @@ NetBox.requestAbsolute = function (url, options) {
     });
   }).catch(function (e) {
     if (e && e.name === 'NetBoxError') throw e;
-    throw NetBox.error('无法连接 NetBox。请确认页面通过 HTTP 服务打开，并检查 CORS 配置和地址。');
+    throw NetBox.error(NetBox.state.proxy
+      ? '无法连接 NetBox Worker 代理。请检查代理地址、允许来源和 NetBox 域名白名单。'
+      : '无法连接 NetBox。请确认页面通过 HTTP 服务打开，并检查 CORS 配置和地址。');
   });
 };
 NetBox.request = function (path, options) {
@@ -2646,9 +2661,11 @@ NetBox.readCurrent = function () {
 NetBox.getConfig = function () {
   try {
     var base = NetBox.normalizeBase($('#nb-base').value);
+    var proxy = NetBox.normalizeProxy($('#nb-proxy').value);
     var token = $('#nb-token').value.trim();
     if (!token) throw NetBox.error('请输入 API Token');
     NetBox.state.base = base;
+    NetBox.state.proxy = proxy;
     NetBox.state.token = token;
     NetBox.state.auth = $('#nb-auth').value === 'Token' ? 'Token' : 'Bearer';
     NetBox.state.conflictMode = $('#nb-conflict').value === 'deprecated' ? 'deprecated' : 'skip';
@@ -2684,6 +2701,7 @@ NetBox.renderConfig = function () {
     '<div class="nb-intro">读取 NetBox 中的网段和 IP 地址，生成差异后再执行同步。默认不删除远端对象；空闲地址不创建，冲突地址按下方策略处理。</div>'
     + '<div class="nb-config-grid">'
     + '<div class="fld"><label for="nb-base">NetBox 地址</label><input id="nb-base" type="url" placeholder="https://netbox.example.com" value="' + esc(s.base) + '"></div>'
+    + '<div class="fld"><label for="nb-proxy">Worker 代理地址（可选）</label><input id="nb-proxy" type="url" placeholder="https://ipviewer-netbox-proxy.example.workers.dev" value="' + esc(s.proxy) + '"><div class="nb-token-note">官方 Demo 未开放浏览器 CORS 时填写；留空则直连 NetBox。代理只转发请求，不保存 Token。</div></div>'
     + '<div class="fld"><label for="nb-token">API Token</label><input id="nb-token" type="password" autocomplete="off" placeholder="nbt_…" value="' + esc(s.token) + '"><div class="nb-token-note">Token 仅保存在当前页面内存，不会写入本地备份或 localStorage。</div></div>'
     + '<div class="fld"><label for="nb-auth">认证方式</label><select id="nb-auth"><option value="Bearer"' + (s.auth === 'Bearer' ? ' selected' : '') + '>Bearer（NetBox v2）</option><option value="Token"' + (s.auth === 'Token' ? ' selected' : '') + '>Token（旧版兼容）</option></select></div>'
     + '<div class="fld"><label for="nb-conflict">冲突地址策略</label><select id="nb-conflict"><option value="skip"' + (s.conflictMode === 'skip' ? ' selected' : '') + '>跳过并在报告中列出</option><option value="deprecated"' + (s.conflictMode === 'deprecated' ? ' selected' : '') + '>明确标为 deprecated</option></select></div>'
@@ -3273,6 +3291,17 @@ function runSelftest() {
   });
   t('导出包含主机名列', function () {
     eq(IO.tableHeaders().indexOf('主机名') >= 0, true);
+  });
+  t('NetBox Worker 地址归一化', function () {
+    eq(NetBox.normalizeProxy('https://proxy.example.workers.dev/'), 'https://proxy.example.workers.dev');
+    eq(NetBox.normalizeProxy(''), '');
+  });
+  t('NetBox Worker 请求地址不携带 Token', function () {
+    NetBox.state.proxy = 'https://proxy.example.workers.dev';
+    var url = NetBox.proxyUrl('https://demo.netbox.dev/api/');
+    eq(url.indexOf('token') < 0, true);
+    eq(url.indexOf(encodeURIComponent('https://demo.netbox.dev/api/')) >= 0, true);
+    NetBox.state.proxy = '';
   });
   t('NetBox 映射计划', function () {
     var oldState = Store.state;

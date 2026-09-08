@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ipviewer-netbox-proxy",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-08",
+  "vars": {
+    "ALLOWED_ORIGINS": "https://ipam.xmtlz.dev/",
+    "ALLOWED_NETBOX_ORIGINS": "https://demo.netbox.dev"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": false
+    }
+  }
+}
