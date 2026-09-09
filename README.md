@@ -44,7 +44,7 @@
 
 **失误保护**：导入/恢复操作前自动备份当前数据，底部状态栏提供「恢复上次导入前备份」。
 
-### NetBox 同步（第一、二阶段）
+### NetBox 同步（第一至三阶段）
 
 顶部「导入 NetBox」支持将本地网段和已登记 IPv4 地址预览并同步到 NetBox：
 
@@ -57,6 +57,11 @@
 - 管理 IP 可作为额外 `IPAddress` 创建，并在接口和 IP 成功后设置为设备 `primary_ip4`；选择忽略时不会写入 NetBox
 - 写入顺序固定为 Prefix → Device → Interface → IPAddress → Device 主 IPv4；创建返回的远端 ID 会自动注入后续请求
 - 已有不同的 MAC、重复设备/接口、MAC 占用冲突或 IP 已关联其他对象时不会自动覆盖/改绑，风险会出现在预览和失败报告中
+- Prefix 支持 VLAN、VRF、Tenant、Tags 和 Custom Fields：VLAN 使用本地网段的 VLAN ID，其他目录项在读取现状后按 ID、名称或 Slug 匹配；匹配不到时告警并跳过该字段
+- DCIM 创建设备支持按本地设备类型（交换机、路由器、服务器等）显式映射 NetBox Device Type ID；未配置映射时保留名称/Slug 自动匹配和默认类型回退
+- 远端 ID 链接带有归一化后的 NetBox 地址指纹，不同 NetBox 实例不会复用旧链接；没有目标指纹的旧链接会重新按内容匹配
+- 大批量写入按每批最多 100 项且约 3.5MB 请求体分块，资源仍按依赖顺序串行提交；网络、限流和 5xx 请求会自动重试
+- 失败按对象记录，结果页可重试失败项，也可导出不含 Token 的 JSON/CSV 失败报告；不会自动删除远端对象或改绑已有 IP
 
 直接浏览器同步需要通过 HTTP 服务打开页面，并在 NetBox 中将页面来源加入精确的 CORS 白名单。例如：
 
@@ -105,7 +110,7 @@ npx wrangler deploy
 
 ## 自测
 
-在地址栏后加 `?selftest` 打开自检页面（`index.html?selftest`），自动运行 42 条断言覆盖 CIDR 计算、CSV 解析、列映射、zip/xlsx 编解码、NetBox IPAM/DCIM 映射与 Worker 请求配置等核心逻辑。
+在地址栏后加 `?selftest` 打开自检页面（`index.html?selftest`），自动运行 47 条断言覆盖 CIDR 计算、CSV 解析、列映射、zip/xlsx 编解码、NetBox IPAM/DCIM/元数据映射、实例隔离、分块和失败报告等核心逻辑。
 
 ## 技术说明
 

@@ -34,3 +34,13 @@
 - Added DCIM preview sections and failure labels for Devices, Interfaces, MAC changes, assignments, primary IPv4, and dependency failures.
 - Browser selftest now passes `42 / 42`; desktop and 390px checks pass with no console errors or horizontal page overflow.
 - Cross-origin mock NetBox regression passed: catalog reads, Device/Interface/IPAddress creates, assignment IDs, primary IPv4 PATCH, remote-link persistence, and token non-persistence.
+
+## 2026-09-09（NetBox 第三阶段）
+
+- Added Prefix metadata synchronization for local VLAN plus configurable NetBox VRF, Tenant, Tags, and Custom Fields defaults.
+- Added remote catalog matching by ID/name/Slug with non-blocking warnings when optional catalog entries are unavailable.
+- Added explicit local device-type to NetBox Device Type mapping controls while preserving automatic matching and default fallback.
+- Added normalized NetBox target fingerprints to remote links; legacy links without a target are not reused across instances.
+- Added dependency-preserving batch writes capped at 100 objects/about 3.5MB, transient-error retries, and object-level failure tracking.
+- Added result-page retry for failed objects and credential-free JSON/CSV failure report export.
+- Browser selftest passed `47 / 47` plus asynchronous zip; Mock NetBox bulk and retry regressions passed; Worker typecheck passed.

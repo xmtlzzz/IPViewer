@@ -12,6 +12,7 @@ Implement every remaining TODO item that is not Excel-specific or IPv6, while pr
 - [complete] Add clear legacy-browser CSV/JSON fallback UI for missing DecompressionStream
 - [complete] Synchronize TODO/README documentation and add focused regression tests
 - [complete] Run selftest and static/runtime checks; review diff for scope
+- [complete] Add NetBox metadata mappings, target isolation, chunked writes, retries, and failure report export
 
 ## Scope decisions
 
@@ -69,3 +70,12 @@ Implement every remaining TODO item that is not Excel-specific or IPv6, while pr
 - [complete] Preserve separate IP, Device, Interface, and management-IP remote links without destructive rebinding
 - [complete] Add DCIM preview tables, warnings, dependency failures, and mobile layout coverage
 - [complete] Run 42 browser selftests, 390px/desktop UI checks, and cross-origin mock NetBox write regression
+
+## NetBox 第三阶段实现（2026-09-09）
+
+- [complete] Read VLAN/VRF/Tenant/Tags catalogs and map optional Prefix metadata plus Custom Fields
+- [complete] Add explicit local device-type to remote Device Type mappings
+- [complete] Isolate persisted remote links by normalized NetBox target URL
+- [complete] Chunk bulk writes, retry transient errors, and preserve dependency order
+- [complete] Add object-level failure details, retry action, and JSON/CSV export without Token
+- [complete] Run 47 browser selftests, desktop/390px checks, Mock NetBox bulk/retry regression, and Worker typecheck

@@ -364,7 +364,7 @@ dialog::backdrop { background:rgba(15,23,42,.42); }
 #dlg, #confirm { width:min(520px, calc(100vw - 32px)); }
 #wiz { width:min(720px, calc(100vw - 32px)); }
 #rules { width:min(640px, calc(100vw - 32px)); }
-#netbox { width:min(820px, calc(100vw - 32px)); }
+#netbox { width:min(900px, calc(100vw - 32px)); }
 
 /* ---------- NetBox sync ---------- */
 .nb-intro { margin-bottom:14px; color:var(--muted); font-size:12.5px; line-height:1.6; }
@@ -386,6 +386,25 @@ dialog::backdrop { background:rgba(15,23,42,.42); }
 .nb-config-note { color:var(--muted); font-size:11.5px; line-height:1.5; }
 .nb-hidden { display:none !important; }
 .nb-token-note { color:var(--muted); font-size:11.5px; margin-top:5px; }
+.nb-prefix-config {
+  grid-column:1 / -1;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:10px 14px;
+  margin-top:2px;
+  padding-top:12px;
+  border-top:1px solid var(--border);
+}
+.nb-prefix-config .nb-subhead, .nb-prefix-config .nb-config-wide { grid-column:1 / -1; }
+.nb-prefix-config .fld input, .nb-prefix-config .fld textarea { width:100%; }
+.nb-prefix-config textarea { min-height:74px; resize:vertical; font-family:Consolas,monospace; font-size:11.5px; line-height:1.45; }
+.nb-dcim-config .nb-mapping-head { grid-column:1 / -1; margin-top:2px; }
+.nb-device-map { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 14px; grid-column:1 / -1; }
+.nb-device-map .fld { min-width:0; }
+.nb-result-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.nb-result-actions .btn { min-height:32px; padding:0 11px; }
+.nb-error-table { max-height:280px; }
+.nb-error-table td:last-child { white-space:pre-wrap; }
 .nb-status { min-height:34px; margin-top:12px; padding:8px 10px; border:1px solid var(--border); border-radius:var(--control-radius); color:var(--muted); background:var(--panel2); font-size:12px; }
 .nb-status.ok { color:var(--st-assigned-t); border-color:var(--st-assigned); background:color-mix(in srgb, var(--st-assigned) 12%, var(--panel)); }
 .nb-status.error { color:var(--st-conflict); border-color:var(--st-conflict); background:color-mix(in srgb, var(--st-conflict) 9%, var(--panel)); }
@@ -571,7 +590,7 @@ dialog::backdrop { background:rgba(15,23,42,.42); }
   .legend { margin-left:0; }
   .map-grid { grid-template-columns:1fr; }
   .kw-row { grid-template-columns:minmax(0,1fr) 112px 34px; }
-  .nb-config-grid, .nb-summary, .nb-dcim-config { grid-template-columns:1fr 1fr; }
+  .nb-config-grid, .nb-summary, .nb-dcim-config, .nb-prefix-config { grid-template-columns:1fr 1fr; }
   .nb-config-grid .fld:first-child { grid-column:1 / -1; }
   #panel { width:100%; max-width:100%; }
   #batch-bar { left:8px; right:8px; bottom:52px; transform:none; max-width:none; overflow-x:auto; }
@@ -579,8 +598,9 @@ dialog::backdrop { background:rgba(15,23,42,.42); }
   footer .spacer { display:none; }
 }
 @media (max-width:480px) {
-  .nb-config-grid, .nb-summary, .nb-dcim-config { grid-template-columns:1fr; }
-  .nb-config-grid .fld:first-child, .nb-dcim-config .nb-subhead, .nb-dcim-config .nb-config-wide { grid-column:auto; }
+  .nb-config-grid, .nb-summary, .nb-dcim-config, .nb-prefix-config, .nb-device-map { grid-template-columns:1fr; }
+  .nb-config-grid .fld:first-child, .nb-dcim-config .nb-subhead, .nb-dcim-config .nb-config-wide,
+  .nb-prefix-config .nb-subhead, .nb-prefix-config .nb-config-wide { grid-column:auto; }
 }
 
 /* ---------- footer ---------- */
@@ -2565,6 +2585,8 @@ NetBox.state = {
   base: '', proxy: '', token: '', auth: 'Bearer', conflictMode: 'skip',
   scope: 'ipam', dcimMode: 'existing', siteId: '', roleId: '', deviceTypeId: '',
   interfaceType: 'virtual', deviceStatus: 'active', mgmtPolicy: 'primary',
+  target: '', prefixVrf: '', prefixTenant: '', prefixTags: [], prefixCustomFields: {},
+  deviceTypeMap: {},
   remote: null, step: 'config', message: '', messageType: '', plan: null,
   progress: '', result: null
 };
@@ -2572,8 +2594,13 @@ NetBox.fieldLabels = {
   prefix: '网段', description: '描述', comments: '备注',
   address: '地址', status: '状态', dns_name: 'DNS 名称', name: '名称',
   device_type: '设备类型', role: '设备角色', site: '站点', type: '接口类型',
-  mac_address: 'MAC 地址', device: '所属设备', assigned_object: '接口关联', primary_ip4: '主 IPv4'
+  mac_address: 'MAC 地址', device: '所属设备', assigned_object: '接口关联', primary_ip4: '主 IPv4',
+  vlan: 'VLAN', vrf: 'VRF', tenant: '租户', tags: '标签', custom_fields: '自定义字段'
 };
+NetBox.deviceTypeKeys = ['switch', 'router', 'server', 'ap', 'camera', 'printer', 'pc', 'other'];
+NetBox.batchItemLimit = 100;
+NetBox.batchBodyLimit = 3.5 * 1024 * 1024;
+NetBox.requestRetryLimit = 2;
 NetBox.actionLabels = { create: '新增', update: '更新', same: '无变更', skip: '跳过' };
 NetBox.interfaceTypes = [
   ['virtual', 'Virtual（虚拟接口）'],
@@ -2636,6 +2663,46 @@ NetBox.parseToken = function (raw, preferredAuth) {
 NetBox.normalizeKey = function (value) {
   return String(value == null ? '' : value).trim().toLowerCase();
 };
+NetBox.targetKey = function () {
+  return String(NetBox.state.target || NetBox.state.base || '').replace(/\/+$/, '');
+};
+NetBox.catalogMatch = function (items, raw, extraKeys) {
+  var key = NetBox.normalizeKey(raw);
+  if (!key || !Array.isArray(items)) return null;
+  var keys = ['id', 'name', 'slug', 'display', 'label'].concat(extraKeys || []);
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+    for (var j = 0; j < keys.length; j++) {
+      if (item && item[keys[j]] != null && NetBox.normalizeKey(item[keys[j]]) === key) return item;
+    }
+  }
+  return null;
+};
+NetBox.catalogId = function (item) {
+  return NetBox.numericId(item && item.id);
+};
+NetBox.catalogLabel = function (item) {
+  if (!item) return '';
+  var name = item.name || item.display || item.model || item.slug || ('#' + (item.id || ''));
+  var suffix = item.slug && item.slug !== name ? ' · ' + item.slug : '';
+  return name + suffix + (item.id != null ? ' (#' + item.id + ')' : '');
+};
+NetBox.catalogDatalist = function (id, items, labelFn) {
+  var html = '<datalist id="' + esc(id) + '">';
+  (Array.isArray(items) ? items : []).slice().sort(function (a, b) {
+    return NetBox.catalogLabel(a).localeCompare(NetBox.catalogLabel(b));
+  }).forEach(function (item) {
+    var label = labelFn ? labelFn(item) : NetBox.catalogLabel(item);
+    var values = [item.name, item.slug, item.display, item.vid, item.id];
+    var seen = {};
+    values.forEach(function (value) {
+      if (value == null || seen[String(value)]) return;
+      seen[String(value)] = true;
+      html += '<option value="' + esc(value) + '" label="' + esc(label) + '"></option>';
+    });
+  });
+  return html + '</datalist>';
+};
 NetBox.numericId = function (value) {
   var id = parseInt(String(value == null ? '' : value), 10);
   return isFinite(id) && id > 0 ? id : null;
@@ -2673,14 +2740,18 @@ NetBox.choiceHtml = function (choices, selected) {
 NetBox.remoteLink = function (record, kind) {
   var links = record && record._netbox;
   if (!links) return null;
-  if (kind === 'ip') return links.id ? links : (links.ip || null);
-  return links[kind] || null;
+  var target = NetBox.targetKey();
+  var usable = function (link) {
+    return link && link.id && target && link.target === target ? link : null;
+  };
+  if (kind === 'prefix' || kind === 'ip') return usable(links) || usable(links[kind]);
+  return usable(links[kind]);
 };
 NetBox.rememberLink = function (record, kind, remote) {
-  if (!record || !remote || !remote.id) return;
-  var link = { id: remote.id, url: remote.url || '', syncedAt: nowIso() };
+  if (!record || !remote || !remote.id || !NetBox.targetKey()) return;
+  var link = { id: remote.id, url: remote.url || '', target: NetBox.targetKey(), syncedAt: nowIso() };
   var previous = record._netbox || {};
-  if (kind === 'ip') record._netbox = Object.assign({}, previous, link);
+  if (kind === 'prefix' || kind === 'ip') record._netbox = Object.assign({}, previous, link);
   else record._netbox = Object.assign({}, previous, { [kind]: link });
 };
 NetBox.normalizeMac = function (value) {
@@ -2763,10 +2834,24 @@ NetBox.getAll = function (endpoint) {
   }
   return readPage();
 };
+NetBox.getCatalog = function (endpoint, label) {
+  return NetBox.getAll(endpoint).then(function (items) {
+    return { items: items, warning: '' };
+  }).catch(function (error) {
+    if (error && (error.status === 403 || error.status === 404)) {
+      return { items: [], warning: '无法读取 NetBox ' + label + ' 目录（HTTP ' + error.status + '），相关字段将跳过' };
+    }
+    throw error;
+  });
+};
 NetBox.readCurrent = function () {
   var requests = [
     NetBox.getAll('ipam/prefixes/'),
-    NetBox.getAll('ipam/ip-addresses/')
+    NetBox.getAll('ipam/ip-addresses/'),
+    NetBox.getCatalog('ipam/vlans/', 'VLAN'),
+    NetBox.getCatalog('ipam/vrfs/', 'VRF'),
+    NetBox.getCatalog('tenancy/tenants/', '租户'),
+    NetBox.getCatalog('extras/tags/', '标签')
   ];
   if (NetBox.state.scope === 'dcim') {
     requests = requests.concat([
@@ -2778,11 +2863,17 @@ NetBox.readCurrent = function () {
     ]);
   }
   return Promise.all(requests).then(function (rows) {
-    var remote = { prefixes: rows[0], ips: rows[1] };
+    var catalogRows = rows.slice(2, 6);
+    var remote = {
+      prefixes: rows[0], ips: rows[1],
+      vlans: catalogRows[0].items, vrfs: catalogRows[1].items,
+      tenants: catalogRows[2].items, tags: catalogRows[3].items,
+      catalogWarnings: catalogRows.map(function (row) { return row.warning; }).filter(Boolean)
+    };
     if (NetBox.state.scope === 'dcim') {
       remote.dcim = {
-        sites: rows[2], deviceTypes: rows[3], roles: rows[4],
-        devices: rows[5], interfaces: rows[6]
+        sites: rows[6], deviceTypes: rows[7], roles: rows[8],
+        devices: rows[9], interfaces: rows[10]
       };
     }
     return remote;
@@ -2795,6 +2886,7 @@ NetBox.getConfig = function () {
     var auth = $('#nb-auth').value === 'Token' ? 'Token' : 'Bearer';
     var tokenConfig = NetBox.parseToken($('#nb-token').value, auth);
     NetBox.state.base = base;
+    NetBox.state.target = base;
     NetBox.state.proxy = proxy;
     NetBox.state.token = tokenConfig.token;
     NetBox.state.auth = tokenConfig.auth;
@@ -2808,9 +2900,21 @@ NetBox.getConfig = function () {
     NetBox.state.interfaceType = $('#nb-interface-type').value || 'virtual';
     NetBox.state.deviceStatus = $('#nb-device-status').value || 'active';
     NetBox.state.mgmtPolicy = $('#nb-mgmt-policy').value === 'ignore' ? 'ignore' : 'primary';
+    NetBox.state.prefixVrf = $('#nb-vrf').value.trim();
+    NetBox.state.prefixTenant = $('#nb-tenant').value.trim();
+    NetBox.state.prefixTags = $('#nb-tags').value.split(',').map(function (item) { return item.trim(); }).filter(Boolean);
+    var customText = $('#nb-custom-fields').value.trim();
+    var customFields = customText ? JSON.parse(customText) : {};
+    if (!customFields || typeof customFields !== 'object' || Array.isArray(customFields)) throw NetBox.error('Custom Fields 必须是 JSON 对象，例如 {"owner":"network"}');
+    NetBox.state.prefixCustomFields = customFields;
+    NetBox.state.deviceTypeMap = {};
+    NetBox.deviceTypeKeys.forEach(function (key) {
+      var input = $('#nb-map-' + key);
+      if (input && input.value) NetBox.state.deviceTypeMap[key] = input.value;
+    });
     return true;
   } catch (e) {
-    NetBox.setMessage(e.message, 'error');
+    NetBox.setMessage(e.name === 'SyntaxError' ? 'Custom Fields JSON 格式不正确' : e.message, 'error');
     return false;
   }
 };
@@ -2837,10 +2941,19 @@ NetBox.open = function () {
 };
 NetBox.renderConfig = function () {
   var s = NetBox.state;
-  var dcim = s.remote && s.remote.dcim ? s.remote.dcim : {};
+  var remote = s.remote || {};
+  var dcim = remote.dcim || {};
   var scope = s.scope === 'dcim' ? 'dcim' : 'ipam';
+  var prefixTags = Array.isArray(s.prefixTags) ? s.prefixTags.join(', ') : String(s.prefixTags || '');
+  var customFields = JSON.stringify(s.prefixCustomFields || {}, null, 2);
+  var deviceMap = s.deviceTypeMap || {};
+  var deviceMapHtml = NetBox.deviceTypeKeys.map(function (key) {
+    return '<div class="fld"><label for="nb-map-' + key + '">' + esc(DEVTYPE_LABEL[key] || key) + '</label><select id="nb-map-' + key + '">'
+      + NetBox.optionHtml(dcim.deviceTypes, deviceMap[key], '按名称/Slug 自动匹配', function (item) { return NetBox.catalogLabel(item); })
+      + '</select></div>';
+  }).join('');
   $('#nb-body').innerHTML =
-    '<div class="nb-intro">先读取 NetBox 现状，再生成差异预览。默认不删除远端对象；空闲地址不创建，冲突地址按下方策略处理。第二阶段可选同步设备、接口并关联 IP。</div>'
+    '<div class="nb-intro">先读取 NetBox 现状，再生成差异预览。默认不删除远端对象；空闲地址不创建，冲突地址按下方策略处理。Token 只在当前页面内存中使用。</div>'
     + '<div class="nb-config-grid">'
     + '<div class="fld"><label for="nb-base">NetBox 地址</label><input id="nb-base" type="url" placeholder="https://netbox.example.com" value="' + esc(s.base) + '"></div>'
     + '<div class="fld"><label for="nb-scope">同步范围</label><select id="nb-scope"><option value="ipam"' + (scope === 'ipam' ? ' selected' : '') + '>第一阶段：网段 + IP 地址</option><option value="dcim"' + (scope === 'dcim' ? ' selected' : '') + '>第二阶段：追加设备 + 接口</option></select><div class="nb-config-note">第二阶段仍先预览；只有确认后才会发起写请求。</div></div>'
@@ -2848,6 +2961,17 @@ NetBox.renderConfig = function () {
     + '<div class="fld"><label for="nb-token">API Token</label><input id="nb-token" type="password" autocomplete="off" placeholder="nbt_… 或 Bearer nbt_…" value="' + esc(s.token) + '"><div class="nb-token-note">可填写裸 Token，也可粘贴完整的 Bearer/Token Authorization 值；Token 仅保存在当前页面内存。</div></div>'
     + '<div class="fld"><label for="nb-auth">认证方式</label><select id="nb-auth"><option value="Bearer"' + (s.auth === 'Bearer' ? ' selected' : '') + '>Bearer（NetBox v2）</option><option value="Token"' + (s.auth === 'Token' ? ' selected' : '') + '>Token（旧版兼容）</option></select></div>'
     + '<div class="fld"><label for="nb-conflict">冲突地址策略</label><select id="nb-conflict"><option value="skip"' + (s.conflictMode === 'skip' ? ' selected' : '') + '>跳过并在报告中列出</option><option value="deprecated"' + (s.conflictMode === 'deprecated' ? ' selected' : '') + '>明确标为 deprecated</option></select></div>'
+    + '<div class="nb-prefix-config">'
+    + '<div class="nb-subhead">Prefix 默认元数据</div>'
+    + '<div class="nb-config-note nb-config-wide">VLAN 使用每个本地网段的 VLAN ID 字段；下面的 VRF、租户、标签和 Custom Fields 会作为所有 Prefix 的默认值。读取现状后可按 ID、名称或 Slug 选择目录项。</div>'
+    + '<div class="fld"><label for="nb-vrf">默认 VRF</label><input id="nb-vrf" list="nb-vrf-options" placeholder="可选：名称、Slug 或 ID" value="' + esc(s.prefixVrf || '') + '"></div>'
+    + '<div class="fld"><label for="nb-tenant">默认租户</label><input id="nb-tenant" list="nb-tenant-options" placeholder="可选：名称、Slug 或 ID" value="' + esc(s.prefixTenant || '') + '"></div>'
+    + '<div class="fld"><label for="nb-tags">默认标签</label><input id="nb-tags" list="nb-tag-options" placeholder="多个值用英文逗号分隔" value="' + esc(prefixTags) + '"></div>'
+    + '<div class="fld nb-config-wide"><label for="nb-custom-fields">默认 Custom Fields（JSON）</label><textarea id="nb-custom-fields" rows="3" spellcheck="false" placeholder="{&quot;owner&quot;:&quot;network&quot;}">' + esc(customFields) + '</textarea></div>'
+    + NetBox.catalogDatalist('nb-vrf-options', remote.vrfs, function (item) { return NetBox.catalogLabel(item); })
+    + NetBox.catalogDatalist('nb-tenant-options', remote.tenants, function (item) { return NetBox.catalogLabel(item); })
+    + NetBox.catalogDatalist('nb-tag-options', remote.tags, function (item) { return NetBox.catalogLabel(item); })
+    + '</div>'
     + '<div id="nb-dcim-fields" class="nb-dcim-config' + (scope === 'dcim' ? '' : ' nb-hidden') + '">'
     + '<div class="nb-subhead">DCIM 依赖配置</div>'
     + '<div class="fld"><label for="nb-site">NetBox 站点</label><select id="nb-site">' + NetBox.optionHtml(dcim.sites, s.siteId, dcim.sites ? '请选择站点' : '读取现状后加载站点', function (item) { return item.name || item.display || ('#' + item.id); }) + '</select></div>'
@@ -2857,6 +2981,9 @@ NetBox.renderConfig = function () {
     + '<div class="fld"><label for="nb-interface-type">默认接口类型</label><select id="nb-interface-type">' + NetBox.choiceHtml(NetBox.interfaceTypes, s.interfaceType) + '</select></div>'
     + '<div class="fld"><label for="nb-device-status">新设备状态</label><select id="nb-device-status">' + NetBox.choiceHtml(NetBox.deviceStatuses, s.deviceStatus) + '</select></div>'
     + '<div class="fld"><label for="nb-mgmt-policy">管理 IP 处理</label><select id="nb-mgmt-policy"><option value="primary"' + (s.mgmtPolicy === 'primary' ? ' selected' : '') + '>创建并设为设备主 IPv4</option><option value="ignore"' + (s.mgmtPolicy === 'ignore' ? ' selected' : '') + '>保留在 IPViewer，不同步</option></select></div>'
+    + '<div class="nb-subhead nb-mapping-head">本地设备类型映射</div>'
+    + '<div class="nb-config-note nb-config-wide">为本地类型指定远端 Device Type ID；留空时继续按名称或 Slug 自动匹配，再回退到默认设备类型。</div>'
+    + '<div class="nb-device-map">' + deviceMapHtml + '</div>'
     + '<div class="nb-config-note nb-config-wide">设备名称来自本地「设备名称」，接口来自「使用接口」，MAC 写入接口主 MAC。已有对象不会被删除；远端已有不同 MAC 时保留远端并在预览中提示。</div>'
     + '</div>'
     + '</div><div id="nb-status" class="nb-status"></div>';
@@ -2867,6 +2994,7 @@ NetBox.renderConfig = function () {
   };
   var foot = $('#nb-foot');
   foot.innerHTML = '';
+  foot.classList.remove('nb-result-actions');
   var cancel = document.createElement('button');
   cancel.className = 'btn'; cancel.textContent = '取消'; cancel.onclick = function () { $('#netbox').close(); };
   var test = document.createElement('button');
@@ -2936,10 +3064,54 @@ NetBox.value = function (value) {
   }
   return String(value);
 };
-NetBox.buildPrefixPayload = function (subnet) {
+NetBox.prefixMetadata = function (subnet, remote, warn) {
+  var payload = {};
+  remote = remote || {};
+  warn = warn || function () {};
+  var vlanValue = String(subnet.vlan == null ? '' : subnet.vlan).trim();
+  if (vlanValue) {
+    var vlan = NetBox.catalogMatch(remote.vlans, vlanValue, ['vid']);
+    var vlanId = NetBox.catalogId(vlan);
+    if (vlanId) payload.vlan = vlanId;
+    else warn('网段「' + (subnet.name || subnet.cidr) + '」的 VLAN「' + vlanValue + '」未在 NetBox 中匹配，已跳过 VLAN 字段');
+  }
+  var vrfValue = String(NetBox.state.prefixVrf || '').trim();
+  if (vrfValue) {
+    var vrf = NetBox.catalogMatch(remote.vrfs, vrfValue, ['rd', 'route_distinguisher']);
+    var vrfId = NetBox.catalogId(vrf);
+    if (vrfId) payload.vrf = vrfId;
+    else warn('默认 VRF「' + vrfValue + '」未在 NetBox 中匹配，已跳过 VRF 字段');
+  }
+  var tenantValue = String(NetBox.state.prefixTenant || '').trim();
+  if (tenantValue) {
+    var tenant = NetBox.catalogMatch(remote.tenants, tenantValue, []);
+    var tenantId = NetBox.catalogId(tenant);
+    if (tenantId) payload.tenant = tenantId;
+    else warn('默认租户「' + tenantValue + '」未在 NetBox 中匹配，已跳过租户字段');
+  }
+  var tagIds = [], tagSeen = {};
+  (Array.isArray(NetBox.state.prefixTags) ? NetBox.state.prefixTags : []).forEach(function (tagValue) {
+    var tag = NetBox.catalogMatch(remote.tags, tagValue, []);
+    var tagId = NetBox.catalogId(tag);
+    if (!tagId) {
+      warn('默认标签「' + tagValue + '」未在 NetBox 中匹配，已跳过该标签');
+    } else if (!tagSeen[tagId]) {
+      tagSeen[tagId] = true;
+      tagIds.push(tagId);
+    }
+  });
+  if (tagIds.length) payload.tags = tagIds;
+  var customFields = NetBox.state.prefixCustomFields || {};
+  if (customFields && typeof customFields === 'object' && Object.keys(customFields).length) {
+    payload.custom_fields = Object.assign({}, customFields);
+  }
+  return payload;
+};
+NetBox.buildPrefixPayload = function (subnet, remote, warn) {
   var payload = { prefix: subnet.cidr };
   if (subnet.name && subnet.name !== subnet.cidr) payload.description = subnet.name;
   if (subnet.note) payload.comments = subnet.note;
+  Object.assign(payload, NetBox.prefixMetadata(subnet, remote, warn));
   return payload;
 };
 NetBox.buildIpPayload = function (ip, rec, conflictMode) {
@@ -2966,9 +3138,15 @@ NetBox.localDcimRows = function () {
   });
   return rows;
 };
-NetBox.resolveDeviceType = function (record, deviceTypes) {
+NetBox.resolveDeviceType = function (record, deviceTypes, warn) {
   var localKey = NetBox.normalizeKey(record && record.deviceType);
   var localLabel = NetBox.normalizeKey(DEVTYPE_LABEL[record && record.deviceType] || '');
+  var mappedId = record && NetBox.state.deviceTypeMap && NetBox.state.deviceTypeMap[record.deviceType];
+  if (mappedId) {
+    var mapped = deviceTypes.filter(function (item) { return String(item.id) === String(mappedId); })[0];
+    if (mapped) return NetBox.objectId(mapped);
+    if (warn) warn('本地设备类型「' + (DEVTYPE_LABEL[record.deviceType] || record.deviceType) + '」的映射 ID「' + mappedId + '」不存在，已回退自动匹配');
+  }
   if (localKey) {
     for (var i = 0; i < deviceTypes.length; i++) {
       var item = deviceTypes[i];
@@ -3013,7 +3191,7 @@ NetBox.buildDcimPlan = function (remote, plan) {
     var first = group.rows[0].record;
     var payload = {};
     if (!reason && !existing && NetBox.state.dcimMode === 'create') {
-      var typeId = NetBox.resolveDeviceType(first, dcim.deviceTypes);
+      var typeId = NetBox.resolveDeviceType(first, dcim.deviceTypes, warn);
       var roleId = NetBox.numericId(NetBox.state.roleId);
       var siteId = NetBox.numericId(NetBox.state.siteId);
       if (!typeId || !roleId || !siteId) reason = '创建设备缺少站点、设备类型或设备角色';
@@ -3225,11 +3403,38 @@ NetBox.buildDcimPlan = function (remote, plan) {
   plan.interfaces = out.interfaces;
   return out;
 };
+NetBox.stableValue = function (value) {
+  if (Array.isArray(value)) return value.map(NetBox.stableValue).sort(function (a, b) { return String(a).localeCompare(String(b)); });
+  if (value && typeof value === 'object') {
+    var out = {};
+    Object.keys(value).sort().forEach(function (key) { out[key] = NetBox.stableValue(value[key]); });
+    return out;
+  }
+  return value;
+};
+NetBox.comparePayloadValue = function (existing, key, payload) {
+  var value = existing && existing[key];
+  if (['vlan', 'vrf', 'tenant'].indexOf(key) >= 0) {
+    if (value == null && existing && existing[key + '_id'] != null) value = existing[key + '_id'];
+    return NetBox.objectId(value);
+  }
+  if (key === 'tags') {
+    return JSON.stringify(NetBox.stableValue((Array.isArray(value) ? value : []).map(function (item) { return NetBox.objectId(item); })));
+  }
+  if (key === 'custom_fields') {
+    var wanted = payload && payload.custom_fields || {};
+    var current = value && typeof value === 'object' ? value : {};
+    var subset = {};
+    Object.keys(wanted).forEach(function (field) { subset[field] = current[field]; });
+    return JSON.stringify(NetBox.stableValue(subset));
+  }
+  return NetBox.value(value);
+};
 NetBox.payloadDiff = function (existing, payload) {
   var out = [];
   Object.keys(payload).forEach(function (key) {
-    var oldValue = NetBox.value(existing && existing[key]);
-    var newValue = NetBox.value(payload[key]);
+    var oldValue = NetBox.comparePayloadValue(existing, key, payload);
+    var newValue = key === 'custom_fields' ? JSON.stringify(NetBox.stableValue(payload[key] || {})) : (key === 'tags' ? JSON.stringify(NetBox.stableValue(payload[key] || [])) : NetBox.value(payload[key]));
     if (key === 'mac_address') {
       oldValue = NetBox.normalizeMac(oldValue) || oldValue;
       newValue = NetBox.normalizeMac(newValue) || newValue;
@@ -3246,7 +3451,11 @@ NetBox.classify = function (kind, local, payload, existing, reason) {
   return { kind: kind, local: local, payload: payload, existing: existing || null, action: existing ? (changes.length ? 'update' : 'same') : 'create', changes: changes };
 };
 NetBox.buildPlan = function (remote) {
-  var plan = { prefixes: [], ips: [], unsupported: [], remote: remote, conflictMode: NetBox.state.conflictMode };
+  var plan = { prefixes: [], ips: [], unsupported: [], warnings: [], remote: remote, conflictMode: NetBox.state.conflictMode };
+  (remote.catalogWarnings || []).forEach(function (message) { plan.warnings.push(message); });
+  function warn(message) {
+    if (plan.warnings.indexOf(message) < 0) plan.warnings.push(message);
+  }
   var prefixByKey = {}, ipByKey = {};
   remote.prefixes.forEach(function (p) {
     var key = NetBox.normalizedPrefix(p.prefix);
@@ -3272,9 +3481,9 @@ NetBox.buildPlan = function (remote) {
     try { cidr = Calc.normalizeCidr(subnet.cidr); } catch (e) {
       plan.prefixes.push(NetBox.classify('prefix', subnet, {}, null, '本地网段 CIDR 无效')); return;
     }
-    var prefixPayload = NetBox.buildPrefixPayload(Object.assign({}, subnet, { cidr: cidr }));
+    var prefixPayload = NetBox.buildPrefixPayload(Object.assign({}, subnet, { cidr: cidr }), remote, warn);
     var pHits = prefixByKey[cidr] || [];
-    var pLinked = NetBox.remoteIdMatch(remote.prefixes, subnet._netbox);
+    var pLinked = NetBox.remoteIdMatch(remote.prefixes, NetBox.remoteLink(subnet, 'prefix'));
     var pLinkMismatch = pLinked && NetBox.normalizedPrefix(pLinked.prefix) !== cidr;
     if (pLinkMismatch) pLinked = null;
     var pExisting = pLinked || (pHits.length === 1 ? pHits[0] : null);
@@ -3307,7 +3516,7 @@ NetBox.buildPlan = function (remote) {
       var payload = valid ? NetBox.buildIpPayload(ip, rec, NetBox.state.conflictMode) : {};
       if (!payload.status && !reason) reason = '状态没有可用的 NetBox 映射';
       var iHits = ipByKey[ip] || [];
-      var iLinked = NetBox.remoteIdMatch(remote.ips, rec._netbox);
+      var iLinked = NetBox.remoteIdMatch(remote.ips, NetBox.remoteLink(rec, 'ip'));
       var iLinkMismatch = iLinked && NetBox.addressOnly(iLinked.address) !== ip;
       if (iLinkMismatch) iLinked = null;
       var iExisting = iLinked || (iHits.length === 1 ? iHits[0] : null);
@@ -3379,12 +3588,15 @@ NetBox.renderDiffTable = function (title, items) {
 };
 NetBox.renderPreview = function () {
   var p = NetBox.state.plan, c = p.counts;
-  var warnings = [];
+  var warnings = p.warnings ? p.warnings.slice() : [];
   if (p.unsupported.length) warnings.push('本阶段未同步字段：' + p.unsupported.join('、') + '。它们仍保留在 IPViewer 本地数据中。');
   var conflictCount = p.ips.filter(function (x) { return x.local.record.status === 'conflict'; }).length;
   if (conflictCount && NetBox.state.conflictMode === 'skip') warnings.push('有 ' + conflictCount + ' 个冲突地址被跳过；如需写入，请返回选择 deprecated 策略。');
   if (p.dcim) warnings = warnings.concat(p.dcim.warnings);
-  var remoteText = '已读取远端：' + p.remote.prefixes.length + ' 个网段，' + p.remote.ips.length + ' 个 IP 地址';
+  var remoteVlans = p.remote.vlans || [], remoteVrfs = p.remote.vrfs || [], remoteTenants = p.remote.tenants || [], remoteTags = p.remote.tags || [];
+  var remoteText = '已读取远端：' + p.remote.prefixes.length + ' 个网段，' + p.remote.ips.length + ' 个 IP 地址，'
+    + remoteVlans.length + ' 个 VLAN，' + remoteVrfs.length + ' 个 VRF，'
+    + remoteTenants.length + ' 个租户，' + remoteTags.length + ' 个标签';
   if (p.dcim) {
     remoteText += '，' + p.remote.dcim.sites.length + ' 个站点，' + p.remote.dcim.deviceTypes.length + ' 个设备类型，'
       + p.remote.dcim.roles.length + ' 个设备角色，' + p.remote.dcim.devices.length + ' 个设备，'
@@ -3408,6 +3620,7 @@ NetBox.renderPreview = function () {
   if (!c.writes) body += '<div class="nb-empty">没有需要写入的新增或更新项。</div>';
   $('#nb-body').innerHTML = body;
   var foot = $('#nb-foot'); foot.innerHTML = '';
+  foot.classList.remove('nb-result-actions');
   var back = document.createElement('button'); back.className = 'btn'; back.textContent = '返回配置'; back.onclick = function () { NetBox.state.step = 'config'; NetBox.renderConfig(); };
   var close = document.createElement('button'); close.className = 'btn'; close.textContent = '关闭'; close.onclick = function () { $('#netbox').close(); };
   foot.appendChild(back); foot.appendChild(close);
@@ -3417,8 +3630,9 @@ NetBox.renderPreview = function () {
   }
 };
 NetBox.renderSync = function () {
-  $('#nb-body').innerHTML = '<div class="nb-intro">正在执行已确认的批量请求。每个 NetBox 资源批次独立提交，完成后会显示成功和失败明细。</div><div class="nb-status">' + esc(NetBox.state.progress || '准备中…') + '</div>';
+  $('#nb-body').innerHTML = '<div class="nb-intro">正在执行已确认的批量请求。每个资源按不超过 100 项且约 3.5MB 的批次提交，完成后会显示对象级成功和失败明细。</div><div class="nb-status">' + esc(NetBox.state.progress || '准备中…') + '</div>';
   var foot = $('#nb-foot'); foot.innerHTML = '';
+  foot.classList.remove('nb-result-actions');
   var cancel = document.createElement('button'); cancel.className = 'btn'; cancel.textContent = '关闭'; cancel.disabled = true; foot.appendChild(cancel);
 };
 NetBox.jobLabel = function (job) {
@@ -3522,7 +3736,7 @@ NetBox.linkResponse = function (job, response) {
     }
     if (!remote || !remote.id) return;
     if (job.kind === 'prefix') {
-      item.local._netbox = { id: remote.id, url: remote.url || '', syncedAt: nowIso() };
+      NetBox.rememberLink(item.local, 'prefix', remote);
     } else if (job.kind === 'device') {
       item.remote = remote;
       item.records.forEach(function (row) { NetBox.rememberLink(row.record, 'device', remote); });
@@ -3537,34 +3751,168 @@ NetBox.linkResponse = function (job, response) {
     }
   });
 };
-NetBox.execute = function () {
-  var plan = NetBox.state.plan, jobs = NetBox.jobs(plan);
-  if (!jobs.length) return;
-  NetBox.state.step = 'sync';
-  NetBox.state.result = { success: [], failures: [] };
-  NetBox.renderSync();
-  function run(index) {
-    if (index >= jobs.length) return NetBox.finishSync();
-    var job = jobs[index];
-    NetBox.state.progress = '正在' + (job.action === 'create' ? '新增' : '更新') + ' ' + NetBox.jobLabel(job) + '（' + job.items.length + ' 项）…';
-    NetBox.renderSync();
-    var prepared = NetBox.prepareJob(job);
-    prepared.blocked.forEach(function (blocked) {
-      NetBox.state.result.failures.push({ job: job, item: blocked.item, message: blocked.message });
-    });
-    if (!prepared.items.length) return run(index + 1);
-    var requestJob = Object.assign({}, job, { items: prepared.items });
-    var payload = prepared.items.map(function (item) { return item.runtimePayload; });
-    NetBox.request(job.endpoint, { method: job.method, body: JSON.stringify(payload) }).then(function (data) {
-      NetBox.linkResponse(requestJob, data);
-      NetBox.state.result.success.push({ job: requestJob, count: prepared.items.length });
-      run(index + 1);
-    }).catch(function (e) {
-      NetBox.state.result.failures.push({ job: requestJob, message: e.message });
-      run(index + 1);
+NetBox.jsonBytes = function (value) {
+  try {
+    if (typeof TextEncoder === 'function') return new TextEncoder().encode(value).length;
+  } catch (e) {}
+  return String(value).length;
+};
+NetBox.chunkItems = function (items) {
+  var chunks = [], current = [], payload = [];
+  function flush() {
+    if (current.length) chunks.push(current);
+    current = [];
+    payload = [];
+  }
+  (items || []).forEach(function (item) {
+    var next = payload.concat([item.runtimePayload || {}]);
+    var tooMany = current.length >= NetBox.batchItemLimit;
+    var tooLarge = NetBox.jsonBytes(JSON.stringify(next)) > NetBox.batchBodyLimit;
+    if (current.length && (tooMany || tooLarge)) flush();
+    current.push(item);
+    payload.push(item.runtimePayload || {});
+  });
+  flush();
+  return chunks;
+};
+NetBox.retryable = function (error) {
+  var status = error && error.status;
+  return !status || status === 408 || status === 425 || status === 429 || status >= 500;
+};
+NetBox.sleep = function (ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); };
+NetBox.requestWithRetry = function (path, options, onRetry) {
+  var attempt = 0;
+  function send() {
+    return NetBox.request(path, options).catch(function (error) {
+      if (!NetBox.retryable(error) || attempt >= NetBox.requestRetryLimit) throw error;
+      attempt++;
+      if (onRetry) onRetry(attempt, error);
+      return NetBox.sleep(350 * Math.pow(2, attempt - 1)).then(send);
     });
   }
-  run(0);
+  return send();
+};
+NetBox.jobKey = function (job) {
+  return [job.kind, job.action, job.method, job.endpoint].join('|');
+};
+NetBox.recordFailure = function (job, item, message, batch) {
+  NetBox.state.result.failures.push({
+    job: { kind: job.kind, action: job.action, method: job.method, endpoint: job.endpoint },
+    item: item || null,
+    batch: batch || 0,
+    message: message || '未知错误'
+  });
+};
+NetBox.jobsFromFailures = function (failures) {
+  var plan = NetBox.state.plan, canonical = NetBox.jobs(plan), grouped = {};
+  (failures || []).forEach(function (failure) {
+    if (!failure.item || !failure.job) return;
+    var key = NetBox.jobKey(failure.job);
+    if (!grouped[key]) grouped[key] = [];
+    if (grouped[key].indexOf(failure.item) < 0) grouped[key].push(failure.item);
+  });
+  return canonical.map(function (job) {
+    var items = grouped[NetBox.jobKey(job)] || [];
+    return items.length ? Object.assign({}, job, { items: items }) : null;
+  }).filter(Boolean);
+};
+NetBox.reportSafe = function (value, depth) {
+  depth = depth || 0;
+  if (depth > 6) return '[truncated]';
+  if (Array.isArray(value)) return value.map(function (item) { return NetBox.reportSafe(item, depth + 1); });
+  if (value && typeof value === 'object') {
+    var out = {};
+    Object.keys(value).forEach(function (key) {
+      if (/token|authorization|password|secret/i.test(key)) return;
+      out[key] = NetBox.reportSafe(value[key], depth + 1);
+    });
+    return out;
+  }
+  return value;
+};
+NetBox.failureRows = function () {
+  return (NetBox.state.result && NetBox.state.result.failures || []).map(function (failure) {
+    var item = failure.item || {};
+    return {
+      resource: NetBox.jobLabel(failure.job),
+      action: failure.job.action === 'create' ? '新增' : '更新',
+      object: item.key ? NetBox.itemName(item) : '',
+      key: item.key || '',
+      endpoint: failure.job.endpoint || '',
+      message: failure.message || '',
+      payload: NetBox.reportSafe(item.runtimePayload || item.payload || {})
+    };
+  });
+};
+NetBox.failureReport = function () {
+  return {
+    generatedAt: nowIso(),
+    target: NetBox.targetKey(),
+    failures: NetBox.failureRows()
+  };
+};
+NetBox.exportFailureReport = function (format) {
+  var report = NetBox.failureReport();
+  if (!report.failures.length) { toast('没有失败对象可导出', { err: true }); return; }
+  var stamp = IO.dateStamp();
+  if (format === 'csv') {
+    var headers = ['资源', '操作', '对象', '键', '接口', '错误', '请求体'];
+    var rows = report.failures.map(function (row) {
+      return [row.resource, row.action, row.object, row.key, row.endpoint, row.message, JSON.stringify(row.payload)];
+    });
+    IO.download(new Blob(['﻿' + IO.csvEncode([headers].concat(rows))], { type: 'text/csv' }), 'netbox-failures-' + stamp + '.csv');
+  } else {
+    IO.download(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }), 'netbox-failures-' + stamp + '.json');
+  }
+  toast('失败报告已导出');
+};
+NetBox.execute = function (jobOverride, preserveResult) {
+  var plan = NetBox.state.plan, jobs = jobOverride || NetBox.jobs(plan);
+  if (!jobs.length) return;
+  NetBox.state.step = 'sync';
+  if (!preserveResult) NetBox.state.result = { success: [], failures: [], round: 0 };
+  NetBox.state.result.round = (NetBox.state.result.round || 0) + 1;
+  NetBox.renderSync();
+  function runJob(index) {
+    if (index >= jobs.length) return NetBox.finishSync();
+    var job = jobs[index];
+    var prepared = NetBox.prepareJob(job);
+    prepared.blocked.forEach(function (blocked) {
+      NetBox.recordFailure(job, blocked.item, blocked.message, 0);
+    });
+    if (!prepared.items.length) return runJob(index + 1);
+    var batches = NetBox.chunkItems(prepared.items);
+    function runBatch(batchIndex) {
+      if (batchIndex >= batches.length) return runJob(index + 1);
+      var batchItems = batches[batchIndex];
+      var requestJob = Object.assign({}, job, { items: batchItems });
+      var payload = batchItems.map(function (item) { return item.runtimePayload; });
+      NetBox.state.progress = '正在' + (job.action === 'create' ? '新增' : '更新') + ' ' + NetBox.jobLabel(job)
+        + '（批次 ' + (batchIndex + 1) + '/' + batches.length + '，' + batchItems.length + ' 项）…';
+      NetBox.renderSync();
+      NetBox.requestWithRetry(job.endpoint, { method: job.method, body: JSON.stringify(payload) }, function (attempt) {
+        NetBox.state.progress = '请求失败，正在重试 ' + NetBox.jobLabel(job) + '（第 ' + attempt + '/' + NetBox.requestRetryLimit + ' 次）…';
+        NetBox.renderSync();
+      }).then(function (data) {
+        NetBox.linkResponse(requestJob, data);
+        NetBox.state.result.success.push({ job: requestJob, count: batchItems.length });
+      }).catch(function (error) {
+        batchItems.forEach(function (item) {
+          NetBox.recordFailure(requestJob, item, error.message || String(error), batchIndex + 1);
+        });
+      }).then(function () { runBatch(batchIndex + 1); });
+    }
+    runBatch(0);
+  }
+  runJob(0);
+};
+NetBox.retryFailed = function () {
+  var result = NetBox.state.result;
+  if (!result || !result.failures.length) return;
+  var jobs = NetBox.jobsFromFailures(result.failures);
+  if (!jobs.length) { toast('没有可重试的失败对象', { err: true }); return; }
+  result.failures = [];
+  NetBox.execute(jobs, true);
 };
 NetBox.finishSync = function () {
   var result = NetBox.state.result;
@@ -3572,16 +3920,27 @@ NetBox.finishSync = function () {
   Store.emit();
   NetBox.state.step = 'result';
   var success = result.success.reduce(function (n, x) { return n + x.count; }, 0);
-  var body = '<div class="nb-result ' + (result.failures.length ? 'error' : 'ok') + '"><strong>同步完成</strong><br>成功处理 ' + success + ' 项' + (result.failures.length ? '，' + result.failures.length + ' 个批次失败。' : '。') + '</div>';
-  if (result.failures.length) body += '<div class="nb-error">' + result.failures.map(function (x) {
-    return esc(NetBox.jobLabel(x.job) + (x.item ? '「' + NetBox.itemName(x.item) + '」' : '') + ' ' + (x.job.action === 'create' ? '新增' : '更新') + '：' + x.message);
-  }).join('\n') + '</div>';
-  body += '<div class="nb-details">远端 ID 和 URL 已写入本地记录，Token 未保存。失败批次不会自动重试，可返回配置重新读取现状。</div>';
+  var body = '<div class="nb-result ' + (result.failures.length ? 'error' : 'ok') + '"><strong>同步完成</strong><br>累计成功处理 ' + success + ' 项' + (result.failures.length ? '，' + result.failures.length + ' 个对象失败。' : '。') + '</div>';
+  if (result.failures.length) {
+    var rows = NetBox.failureRows();
+    body += '<div class="nb-section"><h4>失败对象（' + rows.length + '）</h4><div class="nb-table-wrap nb-error-table"><table class="nb-table"><thead><tr><th>资源</th><th>对象</th><th>接口</th><th>错误</th></tr></thead><tbody>';
+    body += rows.map(function (row) {
+      return '<tr><td>' + esc(row.resource + ' · ' + row.action) + '</td><td><code>' + esc(row.object || row.key) + '</code></td><td><code>' + esc(row.endpoint) + '</code></td><td>' + esc(row.message) + '</td></tr>';
+    }).join('');
+    body += '</tbody></table></div></div>';
+  }
+  body += '<div class="nb-details">远端 ID、目标指纹和 URL 已写入本地记录，Token 未保存。失败对象可单独重试或导出报告。</div>';
   $('#nb-body').innerHTML = body;
-  var foot = $('#nb-foot'); foot.innerHTML = '';
-  var close = document.createElement('button'); close.className = 'btn primary'; close.textContent = '完成'; close.onclick = function () { $('#netbox').close(); };
+  var foot = $('#nb-foot'); foot.innerHTML = ''; foot.classList.add('nb-result-actions');
+  if (result.failures.length) {
+    var retry = document.createElement('button'); retry.className = 'btn primary'; retry.textContent = '重试失败项'; retry.onclick = NetBox.retryFailed;
+    var exportJson = document.createElement('button'); exportJson.className = 'btn'; exportJson.textContent = '导出失败 JSON'; exportJson.onclick = function () { NetBox.exportFailureReport('json'); };
+    var exportCsv = document.createElement('button'); exportCsv.className = 'btn'; exportCsv.textContent = '导出失败 CSV'; exportCsv.onclick = function () { NetBox.exportFailureReport('csv'); };
+    foot.appendChild(retry); foot.appendChild(exportJson); foot.appendChild(exportCsv);
+  }
+  var close = document.createElement('button'); close.className = 'btn'; close.textContent = '完成'; close.onclick = function () { $('#netbox').close(); };
   foot.appendChild(close);
-  toast(result.failures.length ? 'NetBox 同步部分完成，请查看失败明细' : 'NetBox 同步完成', { err: !!result.failures.length, ms: 6000 });
+  toast(result.failures.length ? 'NetBox 同步部分完成，请查看失败对象' : 'NetBox 同步完成', { err: !!result.failures.length, ms: 6000 });
 };
 
 /* ============================================================
@@ -3904,6 +4263,88 @@ function runSelftest() {
     try { NetBox.parseToken('sample value', 'Bearer'); } catch (e) { rejected = true; }
     eq(rejected, true);
   });
+  t('NetBox 目标实例隔离', function () {
+    var oldBase = NetBox.state.base, oldTarget = NetBox.state.target;
+    try {
+      NetBox.state.base = 'https://netbox-a.example';
+      NetBox.state.target = 'https://netbox-a.example';
+      var record = { _netbox: { id: 7, target: 'https://netbox-b.example' } };
+      eq(NetBox.remoteLink(record, 'ip'), null);
+      record._netbox.target = 'https://netbox-a.example';
+      eq(NetBox.remoteLink(record, 'ip').id, 7);
+    } finally {
+      NetBox.state.base = oldBase;
+      NetBox.state.target = oldTarget;
+    }
+  });
+  t('NetBox Prefix 元数据匹配', function () {
+    var old = {
+      prefixVrf: NetBox.state.prefixVrf, prefixTenant: NetBox.state.prefixTenant,
+      prefixTags: NetBox.state.prefixTags, prefixCustomFields: NetBox.state.prefixCustomFields
+    };
+    try {
+      NetBox.state.prefixVrf = 'prod-vrf';
+      NetBox.state.prefixTenant = 'Network';
+      NetBox.state.prefixTags = ['core', 'missing'];
+      NetBox.state.prefixCustomFields = { owner: 'network' };
+      var warnings = [];
+      var payload = NetBox.buildPrefixPayload({ name: '核心网', cidr: '10.0.0.0/24', vlan: '20', note: '' }, {
+        vlans: [{ id: 11, vid: 20, name: 'Users' }],
+        vrfs: [{ id: 12, name: 'Production', slug: 'prod-vrf' }],
+        tenants: [{ id: 13, name: 'Network' }],
+        tags: [{ id: 14, name: 'core', slug: 'core' }]
+      }, function (message) { warnings.push(message); });
+      eq(payload.vlan, 11);
+      eq(payload.vrf, 12);
+      eq(payload.tenant, 13);
+      eq(JSON.stringify(payload.tags), JSON.stringify([14]));
+      eq(payload.custom_fields.owner, 'network');
+      eq(warnings.length, 1);
+    } finally {
+      NetBox.state.prefixVrf = old.prefixVrf;
+      NetBox.state.prefixTenant = old.prefixTenant;
+      NetBox.state.prefixTags = old.prefixTags;
+      NetBox.state.prefixCustomFields = old.prefixCustomFields;
+    }
+  });
+  t('NetBox 设备类型显式映射', function () {
+    var oldMap = NetBox.state.deviceTypeMap;
+    try {
+      NetBox.state.deviceTypeMap = { router: '19' };
+      eq(NetBox.resolveDeviceType({ deviceType: 'router' }, [{ id: 19, model: 'Generic' }], function () {}), '19');
+    } finally {
+      NetBox.state.deviceTypeMap = oldMap;
+    }
+  });
+  t('NetBox 大批量分块', function () {
+    var items = [];
+    for (var i = 0; i < 205; i++) items.push({ runtimePayload: { address: '10.0.' + Math.floor(i / 254) + '.' + (i % 254 + 1) + '/32' } });
+    var chunks = NetBox.chunkItems(items);
+    eq(chunks.length, 3);
+    eq(chunks[0].length, 100);
+    eq(chunks[1].length, 100);
+    eq(chunks[2].length, 5);
+    chunks.forEach(function (chunk) {
+      eq(NetBox.jsonBytes(JSON.stringify(chunk.map(function (item) { return item.runtimePayload; }))) <= NetBox.batchBodyLimit, true);
+    });
+  });
+  t('NetBox 失败报告不含 Token', function () {
+    var old = { target: NetBox.state.target, result: NetBox.state.result };
+    try {
+      NetBox.state.target = 'https://netbox.example';
+      NetBox.state.result = { success: [], failures: [{
+        job: { kind: 'ip', action: 'create', endpoint: 'ipam/ip-addresses/' },
+        item: { key: '10.0.0.1', payload: { address: '10.0.0.1/32', token: 'secret-value' } },
+        message: '测试失败'
+      }] };
+      var report = JSON.stringify(NetBox.failureReport());
+      eq(report.indexOf('secret-value'), -1);
+      eq(report.indexOf('10.0.0.1') >= 0, true);
+    } finally {
+      NetBox.state.target = old.target;
+      NetBox.state.result = old.result;
+    }
+  });
   t('NetBox 映射计划', function () {
     var oldState = Store.state;
     var oldMode = NetBox.state.conflictMode;
@@ -4001,12 +4442,17 @@ function runSelftest() {
     }
   });
   t('NetBox 管理 IP 链接不覆盖普通 IP', function () {
-    var record = { _netbox: { id: 8, url: '/api/ipam/ip-addresses/8/' } };
+    var oldTarget = NetBox.state.target, oldBase = NetBox.state.base;
+    NetBox.state.target = 'https://netbox.example';
+    NetBox.state.base = 'https://netbox.example';
+    var record = { _netbox: { id: 8, url: '/api/ipam/ip-addresses/8/', target: 'https://netbox.example' } };
     NetBox.rememberLink(record, 'management', { id: 30, url: '/api/ipam/ip-addresses/30/' });
     eq(record._netbox.id, 8);
     eq(record._netbox.management.id, 30);
     eq(NetBox.remoteLink(record, 'ip').id, 8);
     eq(NetBox.remoteLink(record, 'management').id, 30);
+    NetBox.state.target = oldTarget;
+    NetBox.state.base = oldBase;
   });
   t('NetBox 重复 MAC 会跳过接口', function () {
     var oldData = Store.state, oldConfig = {

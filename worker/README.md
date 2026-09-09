@@ -69,6 +69,7 @@ npm run dev
 - 只允许 `GET`、`POST`、`PATCH`，不提供删除代理。
 - 只转发 `Accept`、`Authorization`、`Content-Type`，不记录请求头或请求体。
 - 上游响应按流转发，不在 Worker 中读取或持久化响应内容。
+- Worker 拒绝超过 5 MiB 的请求体；IPViewer 客户端会在资源依赖顺序不变的前提下按每批最多 100 项、约 3.5 MiB 分块发送，并在临时错误时重试。
 
 CORS 不是身份认证。任何能使用允许来源页面的人仍可以使用自己输入的 NetBox Token，所以应在 NetBox 中使用最小权限 Token，并在不使用时撤销。不要把 Token 设置成 Worker 的变量、Secret 或硬编码常量。
 

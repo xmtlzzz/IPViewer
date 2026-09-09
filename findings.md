@@ -69,6 +69,7 @@
 - Excel import/export is unrelated to NetBox synchronization; the sync should consume the normalized in-memory records after CSV/JSON/XLSX import.
 - The implementation now covers Prefix + IPAddress and the optional Device/Interface/MAC scope with in-memory credentials, remote diff preview, non-destructive bulk create/update, explicit conflict handling, and persisted remote IDs. DCIM creation is opt-in; the default policy only associates existing objects.
 - DCIM writes are dependency-aware: create Device first, inject its returned ID into Interface creation, inject Interface IDs into IPAddress assignment, and set `primary_ip4` only after the IP response returns. Existing foreign IP assignments and MAC collisions are reported and left unchanged.
+- The completed third-stage client reads VLAN/VRF/Tenant/Tag catalogs, maps Prefix metadata and custom fields, supports explicit local-device-type to Device Type mappings, fingerprints persisted links by normalized NetBox base URL, chunks writes at 100 objects/about 3.5 MB, retries transient failures, and exposes object-level retry/export reports without credentials.
 
 ### First-Stage Regression
 
@@ -81,3 +82,11 @@
 - Browser selftest: `42 / 42` passed in Chromium/Edge-compatible runtime.
 - Cross-origin mock NetBox: DCIM catalog reads, Device POST, Interface POST with returned Device ID, IPAddress POST with returned Interface IDs, Device primary IPv4 PATCH, remote-link persistence, and token non-persistence all passed.
 - Responsive DCIM preview: 390px viewport kept the `358px` dialog and page/body widths at `390px`; long preview content remained internally scrollable without horizontal page overflow.
+
+### Third-Stage Regression (2026-09-09)
+
+- Browser selftest: `47 / 47` synchronous assertions plus the asynchronous zip assertion passed in Edge.
+- Mock NetBox bulk regression: 205 IP objects were submitted as `100 / 100 / 5`, Prefix VLAN metadata resolved to the remote VLAN ID, 206 objects completed with zero failures, target fingerprints were persisted, and the test Token was absent from local data.
+- Mock transient-failure regression: an IP batch returning HTTP 503 was retried automatically, recorded at object level, then all failed objects succeeded through the result-page retry action.
+- Worker validation: `npm run typecheck` passed with Wrangler `4.129.1`.
+- Responsive configuration/result surfaces: desktop and 390px measurements remained within the viewport with internal table scrolling for long content.
