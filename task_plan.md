@@ -59,3 +59,13 @@ Implement every remaining TODO item that is not Excel-specific or IPv6, while pr
 - [complete] Add non-destructive bulk create/update with explicit confirmation
 - [complete] Add conflict/free mappings, unsupported-field warnings, remote ID links, and failure report
 - [complete] Run browser/API simulation regression, update docs, and commit
+
+## NetBox 第二阶段实现 (2026-09-09)
+
+- [complete] Add optional DCIM scope and in-memory Site/Device Type/Device Role configuration
+- [complete] Match or create Devices and Interfaces, including normalized MAC synchronization
+- [complete] Link IPAddress objects to Interfaces and optionally set Device primary IPv4
+- [complete] Enforce Prefix → Device → Interface → IPAddress → primary IPv4 dependency order
+- [complete] Preserve separate IP, Device, Interface, and management-IP remote links without destructive rebinding
+- [complete] Add DCIM preview tables, warnings, dependency failures, and mobile layout coverage
+- [complete] Run 42 browser selftests, 390px/desktop UI checks, and cross-origin mock NetBox write regression

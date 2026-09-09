@@ -24,3 +24,13 @@
 - Added optional Cloudflare Worker proxy integration: exact page-origin and NetBox-origin allowlists, `/api/` path restriction, read/write method allowlist, CORS preflight, streamed upstream responses, and no Token persistence.
 - Added Worker deployment configuration and README instructions; local Worker security matrix passed and Edge selftest passed at `37 / 37`.
 - Fixed NetBox credential input handling so bare tokens and complete `Bearer`/`Token` Authorization values are normalized without duplicate schemes; deployed Worker version `64de4b69-bb40-46b9-85ba-349b765a4d1d`, and Edge selftest now passes at `38 / 38`.
+
+## 2026-09-09
+
+- Implemented optional NetBox DCIM synchronization for Device, Interface, MAC, Interface IP assignment, and Device primary IPv4.
+- Added remote DCIM catalog reads, Site/Device Type/Device Role selectors, existing-only versus create-missing policy, management-IP policy, and responsive preview configuration.
+- Added dependency-aware execution: Prefix → Device → Interface → IPAddress → Device primary IPv4, with returned IDs injected into dependent payloads.
+- Added separate `_netbox.device`, `_netbox.interface`, and `_netbox.management` links while preserving the existing direct IP link; destructive rebinding and MAC conflicts are skipped with warnings.
+- Added DCIM preview sections and failure labels for Devices, Interfaces, MAC changes, assignments, primary IPv4, and dependency failures.
+- Browser selftest now passes `42 / 42`; desktop and 390px checks pass with no console errors or horizontal page overflow.
+- Cross-origin mock NetBox regression passed: catalog reads, Device/Interface/IPAddress creates, assignment IDs, primary IPv4 PATCH, remote-link persistence, and token non-persistence.

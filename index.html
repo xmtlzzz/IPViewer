@@ -371,6 +371,20 @@ dialog::backdrop { background:rgba(15,23,42,.42); }
 .nb-config-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px 14px; }
 .nb-config-grid .fld:first-child { grid-column:1 / -1; }
 .nb-config-grid .fld input, .nb-config-grid .fld select { width:100%; }
+.nb-dcim-config {
+  grid-column:1 / -1;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:10px 14px;
+  margin-top:2px;
+  padding-top:12px;
+  border-top:1px solid var(--border);
+}
+.nb-dcim-config .nb-subhead { grid-column:1 / -1; font-size:12.5px; font-weight:600; color:var(--text); }
+.nb-dcim-config .fld input, .nb-dcim-config .fld select { width:100%; }
+.nb-dcim-config .nb-config-wide { grid-column:1 / -1; }
+.nb-config-note { color:var(--muted); font-size:11.5px; line-height:1.5; }
+.nb-hidden { display:none !important; }
 .nb-token-note { color:var(--muted); font-size:11.5px; margin-top:5px; }
 .nb-status { min-height:34px; margin-top:12px; padding:8px 10px; border:1px solid var(--border); border-radius:var(--control-radius); color:var(--muted); background:var(--panel2); font-size:12px; }
 .nb-status.ok { color:var(--st-assigned-t); border-color:var(--st-assigned); background:color-mix(in srgb, var(--st-assigned) 12%, var(--panel)); }
@@ -557,12 +571,16 @@ dialog::backdrop { background:rgba(15,23,42,.42); }
   .legend { margin-left:0; }
   .map-grid { grid-template-columns:1fr; }
   .kw-row { grid-template-columns:minmax(0,1fr) 112px 34px; }
-  .nb-config-grid, .nb-summary { grid-template-columns:1fr 1fr; }
+  .nb-config-grid, .nb-summary, .nb-dcim-config { grid-template-columns:1fr 1fr; }
   .nb-config-grid .fld:first-child { grid-column:1 / -1; }
   #panel { width:100%; max-width:100%; }
   #batch-bar { left:8px; right:8px; bottom:52px; transform:none; max-width:none; overflow-x:auto; }
   footer { gap:8px; padding:5px 10px; flex-wrap:wrap; }
   footer .spacer { display:none; }
+}
+@media (max-width:480px) {
+  .nb-config-grid, .nb-summary, .nb-dcim-config { grid-template-columns:1fr; }
+  .nb-config-grid .fld:first-child, .nb-dcim-config .nb-subhead, .nb-dcim-config .nb-config-wide { grid-column:auto; }
 }
 
 /* ---------- footer ---------- */
@@ -2545,14 +2563,32 @@ IO.fallbackCopy = function (text) {
 var NetBox = {};
 NetBox.state = {
   base: '', proxy: '', token: '', auth: 'Bearer', conflictMode: 'skip',
-  step: 'config', message: '', messageType: '', plan: null,
+  scope: 'ipam', dcimMode: 'existing', siteId: '', roleId: '', deviceTypeId: '',
+  interfaceType: 'virtual', deviceStatus: 'active', mgmtPolicy: 'primary',
+  remote: null, step: 'config', message: '', messageType: '', plan: null,
   progress: '', result: null
 };
 NetBox.fieldLabels = {
   prefix: '网段', description: '描述', comments: '备注',
-  address: '地址', status: '状态', dns_name: 'DNS 名称'
+  address: '地址', status: '状态', dns_name: 'DNS 名称', name: '名称',
+  device_type: '设备类型', role: '设备角色', site: '站点', type: '接口类型',
+  mac_address: 'MAC 地址', device: '所属设备', assigned_object: '接口关联', primary_ip4: '主 IPv4'
 };
 NetBox.actionLabels = { create: '新增', update: '更新', same: '无变更', skip: '跳过' };
+NetBox.interfaceTypes = [
+  ['virtual', 'Virtual（虚拟接口）'],
+  ['1000base-t', '1000BASE-T（铜口）'],
+  ['1000base-x-sfp', '1000BASE-X SFP'],
+  ['10gbase-x-sfpp', '10GBASE-X SFP+'],
+  ['25gbase-x-sfp28', '25GBASE-X SFP28'],
+  ['lag', 'LAG（聚合接口）'],
+  ['bridge', 'Bridge（桥接）'],
+  ['other', 'Other（其他）']
+];
+NetBox.deviceStatuses = [
+  ['active', 'Active（启用）'], ['planned', 'Planned（计划）'],
+  ['staged', 'Staged（待上线）'], ['offline', 'Offline（离线）']
+];
 
 NetBox.error = function (message, status) {
   var e = new Error(message);
@@ -2596,6 +2632,69 @@ NetBox.parseToken = function (raw, preferredAuth) {
   }
   if (!value || /\s/.test(value)) throw NetBox.error('API Token 格式不正确：请输入 Token，或粘贴完整的 Bearer/Token Authorization 值');
   return { auth: auth, token: value };
+};
+NetBox.normalizeKey = function (value) {
+  return String(value == null ? '' : value).trim().toLowerCase();
+};
+NetBox.numericId = function (value) {
+  var id = parseInt(String(value == null ? '' : value), 10);
+  return isFinite(id) && id > 0 ? id : null;
+};
+NetBox.objectId = function (value) {
+  if (value && typeof value === 'object') return value.id == null ? '' : String(value.id);
+  return value == null ? '' : String(value);
+};
+NetBox.objectLabel = function (value) {
+  if (!value) return '';
+  if (typeof value !== 'object') return String(value);
+  return String(value.display || value.name || value.model || value.slug || value.label || ('#' + (value.id || '')));
+};
+NetBox.optionHtml = function (items, selected, placeholder, labelFn) {
+  var list = Array.isArray(items) ? items.slice() : [];
+  list.sort(function (a, b) { return NetBox.objectLabel(a).localeCompare(NetBox.objectLabel(b)); });
+  var selectedValue = String(selected || '');
+  var html = '<option value="">' + esc(placeholder) + '</option>';
+  list.forEach(function (item) {
+    var id = NetBox.objectId(item);
+    var label = labelFn ? labelFn(item) : NetBox.objectLabel(item);
+    html += '<option value="' + esc(id) + '"' + (id === selectedValue ? ' selected' : '') + '>' + esc(label) + '</option>';
+  });
+  if (selectedValue && !list.some(function (item) { return NetBox.objectId(item) === selectedValue; })) {
+    html += '<option value="' + esc(selectedValue) + '" selected>已选 ID ' + esc(selectedValue) + '</option>';
+  }
+  return html;
+};
+NetBox.choiceHtml = function (choices, selected) {
+  var selectedValue = String(selected || '');
+  return choices.map(function (choice) {
+    return '<option value="' + esc(choice[0]) + '"' + (choice[0] === selectedValue ? ' selected' : '') + '>' + esc(choice[1]) + '</option>';
+  }).join('');
+};
+NetBox.remoteLink = function (record, kind) {
+  var links = record && record._netbox;
+  if (!links) return null;
+  if (kind === 'ip') return links.id ? links : (links.ip || null);
+  return links[kind] || null;
+};
+NetBox.rememberLink = function (record, kind, remote) {
+  if (!record || !remote || !remote.id) return;
+  var link = { id: remote.id, url: remote.url || '', syncedAt: nowIso() };
+  var previous = record._netbox || {};
+  if (kind === 'ip') record._netbox = Object.assign({}, previous, link);
+  else record._netbox = Object.assign({}, previous, { [kind]: link });
+};
+NetBox.normalizeMac = function (value) {
+  var raw = String(value || '').trim().replace(/[.:-]/g, '').toLowerCase();
+  if (!/^[0-9a-f]{12}$/.test(raw)) return '';
+  return raw.match(/.{2}/g).join(':');
+};
+NetBox.remoteSiteId = function (device) { return NetBox.objectId(device && (device.site || device.site_id)); };
+NetBox.remoteDeviceId = function (item) { return NetBox.objectId(item && (item.device || item.device_id)); };
+NetBox.remotePrimaryId = function (device) { return NetBox.objectId(device && (device.primary_ip4 || device.primary_ip4_id)); };
+NetBox.remoteItem = function (item) { return item && (item.remote || item.existing) || null; };
+NetBox.remoteItemId = function (item) { return NetBox.objectId(NetBox.remoteItem(item)); };
+NetBox.remoteInterfaceMac = function (item) {
+  return NetBox.normalizeMac(item && (item.mac_address || (item.primary_mac_address && item.primary_mac_address.mac_address)));
 };
 NetBox.authHeader = function () {
   return NetBox.state.auth + ' ' + NetBox.state.token;
@@ -2665,10 +2764,29 @@ NetBox.getAll = function (endpoint) {
   return readPage();
 };
 NetBox.readCurrent = function () {
-  return Promise.all([
+  var requests = [
     NetBox.getAll('ipam/prefixes/'),
     NetBox.getAll('ipam/ip-addresses/')
-  ]).then(function (rows) { return { prefixes: rows[0], ips: rows[1] }; });
+  ];
+  if (NetBox.state.scope === 'dcim') {
+    requests = requests.concat([
+      NetBox.getAll('dcim/sites/'),
+      NetBox.getAll('dcim/device-types/'),
+      NetBox.getAll('dcim/device-roles/'),
+      NetBox.getAll('dcim/devices/'),
+      NetBox.getAll('dcim/interfaces/')
+    ]);
+  }
+  return Promise.all(requests).then(function (rows) {
+    var remote = { prefixes: rows[0], ips: rows[1] };
+    if (NetBox.state.scope === 'dcim') {
+      remote.dcim = {
+        sites: rows[2], deviceTypes: rows[3], roles: rows[4],
+        devices: rows[5], interfaces: rows[6]
+      };
+    }
+    return remote;
+  });
 };
 NetBox.getConfig = function () {
   try {
@@ -2682,6 +2800,14 @@ NetBox.getConfig = function () {
     NetBox.state.auth = tokenConfig.auth;
     $('#nb-auth').value = tokenConfig.auth;
     NetBox.state.conflictMode = $('#nb-conflict').value === 'deprecated' ? 'deprecated' : 'skip';
+    NetBox.state.scope = $('#nb-scope').value === 'dcim' ? 'dcim' : 'ipam';
+    NetBox.state.dcimMode = $('#nb-dcim-mode').value === 'create' ? 'create' : 'existing';
+    NetBox.state.siteId = $('#nb-site').value || '';
+    NetBox.state.roleId = $('#nb-role').value || '';
+    NetBox.state.deviceTypeId = $('#nb-device-type').value || '';
+    NetBox.state.interfaceType = $('#nb-interface-type').value || 'virtual';
+    NetBox.state.deviceStatus = $('#nb-device-status').value || 'active';
+    NetBox.state.mgmtPolicy = $('#nb-mgmt-policy').value === 'ignore' ? 'ignore' : 'primary';
     return true;
   } catch (e) {
     NetBox.setMessage(e.message, 'error');
@@ -2701,6 +2827,7 @@ NetBox.open = function () {
   NetBox.state.step = 'config';
   NetBox.state.plan = null;
   NetBox.state.result = null;
+  NetBox.state.remote = null;
   NetBox.state.progress = '';
   NetBox.state.message = '';
   NetBox.state.messageType = '';
@@ -2710,15 +2837,34 @@ NetBox.open = function () {
 };
 NetBox.renderConfig = function () {
   var s = NetBox.state;
+  var dcim = s.remote && s.remote.dcim ? s.remote.dcim : {};
+  var scope = s.scope === 'dcim' ? 'dcim' : 'ipam';
   $('#nb-body').innerHTML =
-    '<div class="nb-intro">读取 NetBox 中的网段和 IP 地址，生成差异后再执行同步。默认不删除远端对象；空闲地址不创建，冲突地址按下方策略处理。</div>'
+    '<div class="nb-intro">先读取 NetBox 现状，再生成差异预览。默认不删除远端对象；空闲地址不创建，冲突地址按下方策略处理。第二阶段可选同步设备、接口并关联 IP。</div>'
     + '<div class="nb-config-grid">'
     + '<div class="fld"><label for="nb-base">NetBox 地址</label><input id="nb-base" type="url" placeholder="https://netbox.example.com" value="' + esc(s.base) + '"></div>'
+    + '<div class="fld"><label for="nb-scope">同步范围</label><select id="nb-scope"><option value="ipam"' + (scope === 'ipam' ? ' selected' : '') + '>第一阶段：网段 + IP 地址</option><option value="dcim"' + (scope === 'dcim' ? ' selected' : '') + '>第二阶段：追加设备 + 接口</option></select><div class="nb-config-note">第二阶段仍先预览；只有确认后才会发起写请求。</div></div>'
     + '<div class="fld"><label for="nb-proxy">Worker 代理地址（可选）</label><input id="nb-proxy" type="url" placeholder="https://ipviewer-netbox-proxy.example.workers.dev" value="' + esc(s.proxy) + '"><div class="nb-token-note">官方 Demo 未开放浏览器 CORS 时填写；留空则直连 NetBox。代理只转发请求，不保存 Token。</div></div>'
     + '<div class="fld"><label for="nb-token">API Token</label><input id="nb-token" type="password" autocomplete="off" placeholder="nbt_… 或 Bearer nbt_…" value="' + esc(s.token) + '"><div class="nb-token-note">可填写裸 Token，也可粘贴完整的 Bearer/Token Authorization 值；Token 仅保存在当前页面内存。</div></div>'
     + '<div class="fld"><label for="nb-auth">认证方式</label><select id="nb-auth"><option value="Bearer"' + (s.auth === 'Bearer' ? ' selected' : '') + '>Bearer（NetBox v2）</option><option value="Token"' + (s.auth === 'Token' ? ' selected' : '') + '>Token（旧版兼容）</option></select></div>'
     + '<div class="fld"><label for="nb-conflict">冲突地址策略</label><select id="nb-conflict"><option value="skip"' + (s.conflictMode === 'skip' ? ' selected' : '') + '>跳过并在报告中列出</option><option value="deprecated"' + (s.conflictMode === 'deprecated' ? ' selected' : '') + '>明确标为 deprecated</option></select></div>'
+    + '<div id="nb-dcim-fields" class="nb-dcim-config' + (scope === 'dcim' ? '' : ' nb-hidden') + '">'
+    + '<div class="nb-subhead">DCIM 依赖配置</div>'
+    + '<div class="fld"><label for="nb-site">NetBox 站点</label><select id="nb-site">' + NetBox.optionHtml(dcim.sites, s.siteId, dcim.sites ? '请选择站点' : '读取现状后加载站点', function (item) { return item.name || item.display || ('#' + item.id); }) + '</select></div>'
+    + '<div class="fld"><label for="nb-dcim-mode">设备处理策略</label><select id="nb-dcim-mode"><option value="existing"' + (s.dcimMode === 'existing' ? ' selected' : '') + '>仅关联已有设备/接口</option><option value="create"' + (s.dcimMode === 'create' ? ' selected' : '') + '>缺失时创建设备/接口</option></select></div>'
+    + '<div class="fld"><label for="nb-role">默认设备角色</label><select id="nb-role">' + NetBox.optionHtml(dcim.roles, s.roleId, s.dcimMode === 'create' ? '创建设备时必选' : '创建设备时选择', function (item) { return (item.name || item.display || ('#' + item.id)) + (item.slug ? ' · ' + item.slug : ''); }) + '</select></div>'
+    + '<div class="fld"><label for="nb-device-type">默认设备类型</label><select id="nb-device-type">' + NetBox.optionHtml(dcim.deviceTypes, s.deviceTypeId, s.dcimMode === 'create' ? '创建设备时必选' : '创建设备时选择', function (item) { return (item.model || item.display || item.name || ('#' + item.id)) + (item.slug ? ' · ' + item.slug : ''); }) + '</select></div>'
+    + '<div class="fld"><label for="nb-interface-type">默认接口类型</label><select id="nb-interface-type">' + NetBox.choiceHtml(NetBox.interfaceTypes, s.interfaceType) + '</select></div>'
+    + '<div class="fld"><label for="nb-device-status">新设备状态</label><select id="nb-device-status">' + NetBox.choiceHtml(NetBox.deviceStatuses, s.deviceStatus) + '</select></div>'
+    + '<div class="fld"><label for="nb-mgmt-policy">管理 IP 处理</label><select id="nb-mgmt-policy"><option value="primary"' + (s.mgmtPolicy === 'primary' ? ' selected' : '') + '>创建并设为设备主 IPv4</option><option value="ignore"' + (s.mgmtPolicy === 'ignore' ? ' selected' : '') + '>保留在 IPViewer，不同步</option></select></div>'
+    + '<div class="nb-config-note nb-config-wide">设备名称来自本地「设备名称」，接口来自「使用接口」，MAC 写入接口主 MAC。已有对象不会被删除；远端已有不同 MAC 时保留远端并在预览中提示。</div>'
+    + '</div>'
     + '</div><div id="nb-status" class="nb-status"></div>';
+  var scopeSelect = $('#nb-scope');
+  var dcimFields = $('#nb-dcim-fields');
+  scopeSelect.onchange = function () {
+    dcimFields.classList.toggle('nb-hidden', scopeSelect.value !== 'dcim');
+  };
   var foot = $('#nb-foot');
   foot.innerHTML = '';
   var cancel = document.createElement('button');
@@ -2741,11 +2887,30 @@ NetBox.testConnection = function () {
     NetBox.setMessage(e.message, 'error');
   }).then(function () { NetBox.setBusy(false); });
 };
+NetBox.validateDcimConfig = function (remote) {
+  if (NetBox.state.scope !== 'dcim') return '';
+  var dcim = remote && remote.dcim;
+  if (!dcim) return '未读取到 NetBox DCIM 资源';
+  if (!NetBox.state.siteId) return '请选择 NetBox 站点';
+  if (!dcim.sites.some(function (item) { return NetBox.objectId(item) === String(NetBox.state.siteId); })) return '所选站点不在 NetBox 返回的资源列表中，请重新读取';
+  if (NetBox.state.dcimMode === 'create') {
+    if (!NetBox.state.roleId) return '创建设备前请选择默认设备角色';
+    if (!NetBox.state.deviceTypeId) return '创建设备前请选择默认设备类型';
+  }
+  return '';
+};
 NetBox.preview = function () {
   if (!NetBox.getConfig()) return;
   NetBox.setBusy(true);
   NetBox.setMessage('正在读取 NetBox 现状，请稍候…');
   NetBox.readCurrent().then(function (remote) {
+    NetBox.state.remote = remote;
+    var configError = NetBox.validateDcimConfig(remote);
+    if (configError) {
+      NetBox.renderConfig();
+      NetBox.setMessage(configError, 'error');
+      return;
+    }
     NetBox.state.plan = NetBox.buildPlan(remote);
     NetBox.state.step = 'preview';
     NetBox.renderPreview();
@@ -2785,11 +2950,290 @@ NetBox.buildIpPayload = function (ip, rec, conflictMode) {
   if (rec.note) payload.comments = rec.note;
   return payload;
 };
+NetBox.interfaceKey = function (deviceName, interfaceName) {
+  return NetBox.normalizeKey(deviceName) + '|' + NetBox.normalizeKey(interfaceName);
+};
+NetBox.localDcimRows = function () {
+  var rows = [];
+  Store.state.data.subnets.forEach(function (subnet) {
+    Object.keys(subnet.ips || {}).forEach(function (ip) {
+      var record = subnet.ips[ip] || {};
+      var status = record.status || 'assigned';
+      if (!record.name || ['free', 'network', 'broadcast'].indexOf(status) >= 0) return;
+      if (Calc.ipToUint(ip) === null) return;
+      rows.push({ subnet: subnet, ip: ip, record: record });
+    });
+  });
+  return rows;
+};
+NetBox.resolveDeviceType = function (record, deviceTypes) {
+  var localKey = NetBox.normalizeKey(record && record.deviceType);
+  var localLabel = NetBox.normalizeKey(DEVTYPE_LABEL[record && record.deviceType] || '');
+  if (localKey) {
+    for (var i = 0; i < deviceTypes.length; i++) {
+      var item = deviceTypes[i];
+      var values = [item.slug, item.model, item.name, item.display].map(NetBox.normalizeKey);
+      if (values.indexOf(localKey) >= 0 || (localLabel && values.indexOf(localLabel) >= 0)) return NetBox.objectId(item);
+    }
+  }
+  return String(NetBox.state.deviceTypeId || '');
+};
+NetBox.buildDcimPlan = function (remote, plan) {
+  var dcim = remote.dcim || { sites: [], deviceTypes: [], roles: [], devices: [], interfaces: [] };
+  var out = { devices: [], interfaces: [], primary: [], warnings: [], rows: [] };
+  var rows = NetBox.localDcimRows();
+  out.rows = rows;
+  var groups = {}, order = [];
+  rows.forEach(function (row) {
+    var key = NetBox.normalizeKey(row.record.name);
+    if (!groups[key]) { groups[key] = { key: key, name: String(row.record.name).trim(), rows: [] }; order.push(key); }
+    groups[key].rows.push(row);
+  });
+  var selectedSite = String(NetBox.state.siteId || '');
+  var remoteDevices = dcim.devices.filter(function (device) { return NetBox.remoteSiteId(device) === selectedSite; });
+  var warned = {};
+  function warn(message) { if (!warned[message]) { warned[message] = true; out.warnings.push(message); } }
+  order.forEach(function (key) {
+    var group = groups[key];
+    var linked = [];
+    group.rows.forEach(function (row) {
+      var link = NetBox.remoteLink(row.record, 'device');
+      var hit = NetBox.remoteIdMatch(dcim.devices, link);
+      if (hit) linked.push(hit);
+    });
+    var linkedIds = {};
+    linked.forEach(function (item) { linkedIds[String(item.id)] = true; });
+    var hits = remoteDevices.filter(function (device) { return NetBox.normalizeKey(device.name) === key; });
+    var reason = '';
+    if (linked.length > 1 && Object.keys(linkedIds).length > 1) reason = '本地保存了多个不同的 NetBox 设备 ID';
+    var existing = linked[0] || (hits.length === 1 ? hits[0] : null);
+    if (hits.length > 1 && !linked[0]) reason = '所选站点中存在多个同名设备';
+    if (linked[0] && NetBox.remoteSiteId(linked[0]) !== selectedSite) reason = '本地绑定的设备不属于所选站点';
+    if (!reason && !existing && NetBox.state.dcimMode !== 'create') reason = 'NetBox 中不存在同名设备，当前策略不创建';
+    var first = group.rows[0].record;
+    var payload = {};
+    if (!reason && !existing && NetBox.state.dcimMode === 'create') {
+      var typeId = NetBox.resolveDeviceType(first, dcim.deviceTypes);
+      var roleId = NetBox.numericId(NetBox.state.roleId);
+      var siteId = NetBox.numericId(NetBox.state.siteId);
+      if (!typeId || !roleId || !siteId) reason = '创建设备缺少站点、设备类型或设备角色';
+      else {
+        payload = { name: group.name, device_type: NetBox.numericId(typeId), role: roleId, site: siteId, status: NetBox.state.deviceStatus };
+        if (first.purpose) payload.description = first.purpose;
+        if (first.note) payload.comments = first.note;
+      }
+    }
+    var item = NetBox.classify('device', { name: group.name, rows: group.rows }, payload, existing, reason);
+    item.key = group.name;
+    item.matchKey = key;
+    item.records = group.rows;
+    item.remote = existing || null;
+    out.devices.push(item);
+    group.rows.forEach(function (row) { row.deviceItem = item; });
+  });
+
+  var interfaceGroups = {}, interfaceOrder = [];
+  rows.forEach(function (row) {
+    var interfaceName = String(row.record.iface || '').trim();
+    if (!interfaceName || !row.deviceItem || row.deviceItem.action === 'skip') return;
+    var key = NetBox.interfaceKey(row.record.name, interfaceName);
+    if (!interfaceGroups[key]) {
+      interfaceGroups[key] = { key: key, name: interfaceName, device: row.deviceItem, rows: [] };
+      interfaceOrder.push(key);
+    }
+    interfaceGroups[key].rows.push(row);
+  });
+  var localMacOwners = {};
+  Object.keys(interfaceGroups).forEach(function (key) {
+    interfaceGroups[key].rows.forEach(function (row) {
+      var mac = NetBox.normalizeMac(row.record.mac);
+      if (!mac) return;
+      if (!localMacOwners[mac]) localMacOwners[mac] = [];
+      if (localMacOwners[mac].indexOf(key) < 0) localMacOwners[mac].push(key);
+    });
+  });
+  var remoteMacOwners = {};
+  dcim.interfaces.forEach(function (item) {
+    var mac = NetBox.remoteInterfaceMac(item);
+    if (!mac) return;
+    if (!remoteMacOwners[mac]) remoteMacOwners[mac] = [];
+    remoteMacOwners[mac].push(item);
+  });
+  interfaceOrder.forEach(function (key) {
+    var group = interfaceGroups[key], deviceItem = group.device;
+    var deviceId = NetBox.objectId(deviceItem.existing || deviceItem.remote);
+    var hits = dcim.interfaces.filter(function (item) {
+      return deviceId && NetBox.remoteDeviceId(item) === deviceId && NetBox.normalizeKey(item.name) === NetBox.normalizeKey(group.name);
+    });
+    var linked = [];
+    group.rows.forEach(function (row) {
+      var hit = NetBox.remoteIdMatch(dcim.interfaces, NetBox.remoteLink(row.record, 'interface'));
+      if (hit) linked.push(hit);
+    });
+    var reason = '';
+    var existing = linked[0] || (hits.length === 1 ? hits[0] : null);
+    if (linked.length > 1 && linked.some(function (item) { return String(item.id) !== String(linked[0].id); })) reason = '本地保存了多个不同的 NetBox 接口 ID';
+    if (hits.length > 1 && !linked[0]) reason = '同一设备中存在多个同名接口';
+    if (linked[0] && deviceId && NetBox.remoteDeviceId(linked[0]) !== deviceId) reason = '本地绑定的接口不属于当前设备';
+    if (linked[0] && !deviceId) reason = '本地绑定的接口所属设备尚未匹配';
+    if (!reason && !existing && NetBox.state.dcimMode !== 'create') reason = 'NetBox 中不存在同名接口，当前策略不创建';
+    var macs = group.rows.map(function (row) { return NetBox.normalizeMac(row.record.mac); }).filter(Boolean);
+    var uniqueMacs = macs.filter(function (mac, index) { return macs.indexOf(mac) === index; });
+    if (uniqueMacs.length > 1) warn('接口「' + group.device.key + ' / ' + group.name + '」对应多个 MAC，预览只使用第一项');
+    uniqueMacs.forEach(function (mac) {
+      var localOwners = localMacOwners[mac] || [];
+      if (localOwners.length > 1) reason = reason || 'MAC ' + mac + ' 在多个本地接口中重复使用';
+      var remoteOwners = (remoteMacOwners[mac] || []).filter(function (owner) { return !existing || String(owner.id) !== String(existing.id); });
+      if (remoteOwners.length) reason = reason || 'MAC ' + mac + ' 已被其他 NetBox 接口占用';
+    });
+    var payload = {};
+    if (!reason && !existing && NetBox.state.dcimMode === 'create') {
+      payload = { name: group.name, type: NetBox.state.interfaceType, enabled: true };
+      if (uniqueMacs[0]) payload.mac_address = uniqueMacs[0];
+    } else if (!reason && existing && uniqueMacs[0]) {
+      var remoteMac = NetBox.remoteInterfaceMac(existing);
+      if (!remoteMac) payload.mac_address = uniqueMacs[0];
+      else if (remoteMac !== uniqueMacs[0]) warn('接口「' + group.device.key + ' / ' + group.name + '」的远端 MAC 不同，已保留远端值');
+    }
+    var item = NetBox.classify('interface', { device: group.device.key, name: group.name, rows: group.rows }, payload, existing, reason);
+    item.key = group.device.key + ' / ' + group.name;
+    item.matchKey = key;
+    item.records = group.rows;
+    item.deviceItem = deviceItem;
+    item.remote = existing || null;
+    out.interfaces.push(item);
+    group.rows.forEach(function (row) { row.interfaceItem = item; });
+  });
+
+  var ipByAddress = {};
+  plan.ips.forEach(function (item) { if (!ipByAddress[item.key]) ipByAddress[item.key] = item; });
+  function managementItem(row, address) {
+    var localItem = ipByAddress[address];
+    if (localItem && localItem.action !== 'skip') {
+      localItem.management = true;
+      return localItem;
+    }
+    if (localItem && localItem.action === 'skip') {
+      localItem.management = true;
+      warn('管理 IP「' + address + '」对应的本地 IP 已被跳过，未重复创建');
+      return localItem;
+    }
+    var hits = remote.ips.filter(function (item) { return NetBox.addressOnly(item.address) === address; });
+    var saved = NetBox.remoteLink(row.record, 'management');
+    var linked = NetBox.remoteIdMatch(remote.ips, saved);
+    var linkMismatch = linked && NetBox.addressOnly(linked.address) !== address;
+    if (linkMismatch) linked = null;
+    var existing = linked || (hits.length === 1 ? hits[0] : null);
+    var reason = linkMismatch ? '本地保存的管理 IP ID 与地址不一致' : (hits.length > 1 ? 'NetBox 中存在多个相同管理 IP' : '');
+    var local = Object.assign({}, row.record, { status: 'assigned' });
+    var payload = NetBox.buildIpPayload(address, local, 'deprecated');
+    var item = NetBox.classify('ip', { subnet: row.subnet, ip: address, record: row.record, management: true }, payload, existing, reason);
+    item.key = address;
+    item.management = true;
+    item.linkKind = 'management';
+    plan.ips.push(item);
+    ipByAddress[address] = item;
+    return item;
+  }
+  function attach(item, interfaceItem) {
+    if (!item || !interfaceItem || interfaceItem.action === 'skip') return;
+    if (item.action === 'skip') {
+      warn('IP「' + item.key + '」因为前置冲突被跳过，未关联到接口');
+      return;
+    }
+    if (item.assignee && item.assignee !== interfaceItem) {
+      warn('IP「' + item.key + '」对应多个接口，已保留第一项关联');
+      item.assignmentBlocked = true;
+      return;
+    }
+    var existingAssigned = item.existing && item.existing.assigned_object_id != null ? NetBox.objectId(item.existing.assigned_object_id) : '';
+    var targetId = NetBox.objectId(interfaceItem.existing || interfaceItem.remote);
+    if (existingAssigned) {
+      var assignedType = String(item.existing.assigned_object_type || '');
+      if (assignedType.indexOf('interface') >= 0 && targetId && existingAssigned === targetId) return;
+      warn('IP「' + item.key + '」已有其他远端关联对象，未自动改绑');
+      item.assignmentBlocked = true;
+      return;
+    }
+    item.assignee = interfaceItem;
+    item.assignmentPreview = '关联接口 ' + interfaceItem.key;
+    if (targetId) {
+      item.payload.assigned_object_type = 'dcim.interface';
+      item.payload.assigned_object_id = NetBox.numericId(targetId);
+      item.assignmentPending = false;
+    } else {
+      item.assignmentPending = true;
+    }
+    if (item.existing && item.action === 'same') {
+      item.action = 'update';
+      item.changes.push({ key: 'assigned_object', oldValue: '未关联', newValue: interfaceItem.key });
+    } else if (!item.changes.some(function (change) { return change.key === 'assigned_object'; })) {
+      item.changes.push({ key: 'assigned_object', oldValue: '未关联', newValue: interfaceItem.key });
+    }
+  }
+  rows.forEach(function (row) {
+    var currentIp = plan.ips.filter(function (item) { return item.local && item.local.record === row.record && item.local.ip === row.ip; })[0];
+    attach(currentIp, row.interfaceItem);
+    if (NetBox.state.mgmtPolicy === 'primary' && String(row.record.mgmtIp || '').trim()) {
+      var address = String(row.record.mgmtIp).trim();
+      if (Calc.ipToUint(address) === null) warn('设备「' + row.record.name + '」的管理 IP 格式无效，已跳过');
+      else {
+        var mgmt = managementItem(row, address);
+        attach(mgmt, row.interfaceItem);
+        if (!mgmt.primaryDeviceItem) mgmt.primaryDeviceItem = row.deviceItem;
+        else if (row.deviceItem && mgmt.primaryDeviceItem !== row.deviceItem) {
+          row.deviceItem.primaryIpBlocked = true;
+          warn('管理 IP「' + address + '」被多个设备使用，主 IPv4 只保留第一台设备');
+        }
+        if (row.deviceItem && !row.deviceItem.primaryIpItem) row.deviceItem.primaryIpItem = mgmt;
+        else if (row.deviceItem && row.deviceItem.primaryIpItem && row.deviceItem.primaryIpItem.key !== mgmt.key) warn('设备「' + row.deviceItem.key + '」存在多个管理 IP，主 IPv4 只使用第一项');
+      }
+    } else if (row.record.mgmtIp && NetBox.state.mgmtPolicy === 'ignore') {
+      warn('管理 IP 已选择保留在 IPViewer，未同步为 NetBox 主 IPv4');
+    }
+    if (row.record.mac && !row.interfaceItem) warn('IP「' + row.ip + '」填写了 MAC，但未填写使用接口，无法关联到 NetBox 接口');
+  });
+  out.devices.forEach(function (deviceItem) {
+    var ipItem = deviceItem.primaryIpItem;
+    if (!ipItem) return;
+    var remoteDevice = NetBox.remoteItem(deviceItem);
+    var currentId = NetBox.remotePrimaryId(remoteDevice);
+    var targetId = NetBox.remoteItemId(ipItem);
+    var primary = {
+      kind: 'device-primary', key: deviceItem.key, deviceItem: deviceItem, ipItem: ipItem,
+      existing: remoteDevice, action: 'update', changes: []
+    };
+    if (deviceItem.primaryIpBlocked || (ipItem.primaryDeviceItem && ipItem.primaryDeviceItem !== deviceItem)) {
+      primary.action = 'skip';
+      primary.reason = '管理 IP 已被其他设备使用';
+    } else if (ipItem.action === 'skip') {
+      primary.action = 'skip';
+      primary.reason = '主 IPv4 对应的 IP 地址被跳过';
+    } else if (ipItem.assignmentBlocked) {
+      primary.action = 'skip';
+      primary.reason = '主 IPv4 对应的 IP 已有关联对象，未自动改绑';
+    } else if (currentId && targetId && currentId === targetId) {
+      primary.action = 'same';
+    } else {
+      primary.changes.push({ key: 'primary_ip4', oldValue: currentId ? currentId : '未设置', newValue: ipItem.key + (targetId ? ' (#' + targetId + ')' : '（等待 IP 创建）') });
+    }
+    deviceItem.primaryItem = primary;
+    out.primary.push(primary);
+  });
+  plan.dcim = out;
+  plan.devices = out.devices;
+  plan.interfaces = out.interfaces;
+  return out;
+};
 NetBox.payloadDiff = function (existing, payload) {
   var out = [];
   Object.keys(payload).forEach(function (key) {
     var oldValue = NetBox.value(existing && existing[key]);
     var newValue = NetBox.value(payload[key]);
+    if (key === 'mac_address') {
+      oldValue = NetBox.normalizeMac(oldValue) || oldValue;
+      newValue = NetBox.normalizeMac(newValue) || newValue;
+    }
     if (oldValue !== newValue) out.push({ key: key, oldValue: oldValue, newValue: newValue });
   });
   return out;
@@ -2816,7 +3260,10 @@ NetBox.buildPlan = function (remote) {
   });
   var unsupportedFields = {};
   function markUnsupported(rec) {
-    [['name', '设备名称'], ['mgmtIp', '管理 IP'], ['iface', '接口'], ['mac', 'MAC'], ['deviceType', '设备类型']].forEach(function (pair) {
+    var pairs = NetBox.state.scope === 'dcim'
+      ? []
+      : [['name', '设备名称'], ['mgmtIp', '管理 IP'], ['iface', '接口'], ['mac', 'MAC'], ['deviceType', '设备类型']];
+    pairs.forEach(function (pair) {
       if (rec && rec[pair[0]]) unsupportedFields[pair[1]] = true;
     });
   }
@@ -2870,25 +3317,48 @@ NetBox.buildPlan = function (remote) {
       iItem.key = ip; plan.ips.push(iItem);
     });
   });
+  if (NetBox.state.scope === 'dcim') NetBox.buildDcimPlan(remote, plan);
   plan.unsupported = Object.keys(unsupportedFields);
   plan.counts = NetBox.planCounts(plan);
   return plan;
 };
 NetBox.planCounts = function (plan) {
-  var c = { create: 0, update: 0, same: 0, skip: 0, prefixes: 0, ips: 0 };
-  ['prefixes', 'ips'].forEach(function (kind) {
+  var c = { create: 0, update: 0, same: 0, skip: 0, prefixes: 0, devices: 0, interfaces: 0, ips: 0, primary: 0 };
+  var kinds = ['prefixes', 'ips'];
+  if (plan.dcim) kinds = ['prefixes', 'devices', 'interfaces', 'ips'];
+  kinds.forEach(function (kind) {
+    c[kind] = 0;
     plan[kind].forEach(function (item) { c[item.action]++; c[kind]++; });
   });
+  if (plan.dcim) {
+    plan.dcim.primary.forEach(function (item) { c[item.action]++; c.primary++; });
+  }
   c.writes = c.create + c.update;
   return c;
 };
 NetBox.itemName = function (item) {
-  return item.key;
+  var name = item.key;
+  if (item.kind === 'ip' && item.management) name += '（管理 IP）';
+  if (item.kind === 'device-primary' && item.ipItem) name += ' → ' + item.ipItem.key;
+  return name;
 };
 NetBox.changeText = function (item) {
   if (item.action === 'skip') return item.reason || '跳过';
-  if (!item.changes.length) return '无字段变化';
-  return item.changes.map(function (d) {
+  var changes = item.changes.slice();
+  function has(key) { return changes.some(function (d) { return d.key === key; }); }
+  if (item.kind === 'interface' && item.deviceItem && !has('device')) {
+    var deviceText = item.deviceItem.key;
+    var deviceId = NetBox.remoteItemId(item.deviceItem);
+    changes.push({ key: 'device', oldValue: '', newValue: deviceText + (deviceId ? ' (#' + deviceId + ')' : '（等待设备创建）') });
+  }
+  if (item.kind === 'ip' && item.assignmentPreview && !has('assigned_object')) {
+    changes.push({ key: 'assigned_object', oldValue: '', newValue: item.assignmentPreview + (item.assignmentPending ? '（等待接口创建）' : '') });
+  }
+  if (item.kind === 'device' && item.primaryItem && item.primaryItem.action !== 'same' && !has('primary_ip4')) {
+    changes.push({ key: 'primary_ip4', oldValue: '', newValue: item.primaryIpItem ? item.primaryIpItem.key : '' });
+  }
+  if (!changes.length) return '无字段变化';
+  return changes.map(function (d) {
     var label = NetBox.fieldLabels[d.key] || d.key;
     if (item.action === 'create') return label + '=' + (d.newValue || '（空）');
     return label + ': ' + (d.oldValue || '（空）') + ' → ' + (d.newValue || '（空）');
@@ -2913,15 +3383,27 @@ NetBox.renderPreview = function () {
   if (p.unsupported.length) warnings.push('本阶段未同步字段：' + p.unsupported.join('、') + '。它们仍保留在 IPViewer 本地数据中。');
   var conflictCount = p.ips.filter(function (x) { return x.local.record.status === 'conflict'; }).length;
   if (conflictCount && NetBox.state.conflictMode === 'skip') warnings.push('有 ' + conflictCount + ' 个冲突地址被跳过；如需写入，请返回选择 deprecated 策略。');
+  if (p.dcim) warnings = warnings.concat(p.dcim.warnings);
+  var remoteText = '已读取远端：' + p.remote.prefixes.length + ' 个网段，' + p.remote.ips.length + ' 个 IP 地址';
+  if (p.dcim) {
+    remoteText += '，' + p.remote.dcim.sites.length + ' 个站点，' + p.remote.dcim.deviceTypes.length + ' 个设备类型，'
+      + p.remote.dcim.roles.length + ' 个设备角色，' + p.remote.dcim.devices.length + ' 个设备，'
+      + p.remote.dcim.interfaces.length + ' 个接口；本地可关联记录 ' + p.dcim.rows.length + ' 条';
+  }
   var body = '<div class="nb-intro">目标：' + esc(NetBox.state.base) + '。以下是读取远端现状后的差异，确认后才会发起写请求。</div>'
     + '<div class="nb-summary">'
     + '<div class="nb-kpi"><b>' + c.create + '</b><span>新增</span></div>'
     + '<div class="nb-kpi"><b>' + c.update + '</b><span>更新</span></div>'
     + '<div class="nb-kpi"><b>' + c.same + '</b><span>无变更</span></div>'
     + '<div class="nb-kpi"><b>' + c.skip + '</b><span>跳过</span></div></div>'
-    + '<div class="nb-status ok">已读取远端：' + p.remote.prefixes.length + ' 个网段，' + p.remote.ips.length + ' 个 IP 地址。IPv4 主机地址按 /32 写入。</div>';
+    + '<div class="nb-status ok">' + esc(remoteText) + '。IPv4 主机地址按 /32 写入。</div>';
   if (warnings.length) body += '<div class="nb-warning"><strong>同步边界</strong><br>' + warnings.map(esc).join('<br>') + '</div>';
   body += NetBox.renderDiffTable('网段 Prefix', p.prefixes);
+  if (p.dcim) {
+    body += NetBox.renderDiffTable('设备 Device', p.dcim.devices);
+    body += NetBox.renderDiffTable('接口 Interface / MAC', p.dcim.interfaces);
+    body += NetBox.renderDiffTable('设备主 IPv4', p.dcim.primary);
+  }
   body += NetBox.renderDiffTable('IP 地址 IPAddress', p.ips);
   if (!c.writes) body += '<div class="nb-empty">没有需要写入的新增或更新项。</div>';
   $('#nb-body').innerHTML = body;
@@ -2939,32 +3421,120 @@ NetBox.renderSync = function () {
   var foot = $('#nb-foot'); foot.innerHTML = '';
   var cancel = document.createElement('button'); cancel.className = 'btn'; cancel.textContent = '关闭'; cancel.disabled = true; foot.appendChild(cancel);
 };
+NetBox.jobLabel = function (job) {
+  var labels = { prefix: '网段', device: '设备', interface: '接口', ip: 'IP 地址', 'device-primary': '设备主 IPv4' };
+  return labels[job.kind] || job.kind;
+};
 NetBox.jobs = function (plan) {
-  return [
+  var jobs = [
     { kind: 'prefix', action: 'create', method: 'POST', endpoint: 'ipam/prefixes/', items: plan.prefixes.filter(function (x) { return x.action === 'create'; }) },
-    { kind: 'prefix', action: 'update', method: 'PATCH', endpoint: 'ipam/prefixes/', items: plan.prefixes.filter(function (x) { return x.action === 'update'; }) },
+    { kind: 'prefix', action: 'update', method: 'PATCH', endpoint: 'ipam/prefixes/', items: plan.prefixes.filter(function (x) { return x.action === 'update'; }) }
+  ];
+  if (plan.dcim) {
+    jobs.push(
+      { kind: 'device', action: 'create', method: 'POST', endpoint: 'dcim/devices/', items: plan.devices.filter(function (x) { return x.action === 'create'; }) },
+      { kind: 'device', action: 'update', method: 'PATCH', endpoint: 'dcim/devices/', items: plan.devices.filter(function (x) { return x.action === 'update'; }) },
+      { kind: 'interface', action: 'create', method: 'POST', endpoint: 'dcim/interfaces/', items: plan.interfaces.filter(function (x) { return x.action === 'create'; }) },
+      { kind: 'interface', action: 'update', method: 'PATCH', endpoint: 'dcim/interfaces/', items: plan.interfaces.filter(function (x) { return x.action === 'update'; }) }
+    );
+  }
+  jobs.push(
     { kind: 'ip', action: 'create', method: 'POST', endpoint: 'ipam/ip-addresses/', items: plan.ips.filter(function (x) { return x.action === 'create'; }) },
     { kind: 'ip', action: 'update', method: 'PATCH', endpoint: 'ipam/ip-addresses/', items: plan.ips.filter(function (x) { return x.action === 'update'; }) }
-  ].filter(function (job) { return job.items.length; });
+  );
+  if (plan.dcim) {
+    jobs.push({ kind: 'device-primary', action: 'update', method: 'PATCH', endpoint: 'dcim/devices/', items: plan.dcim.primary.filter(function (x) { return x.action === 'update'; }) });
+  }
+  return jobs.filter(function (job) { return job.items.length; });
+};
+NetBox.prepareJobItem = function (job, item) {
+  var payload = Object.assign({}, item.payload || {});
+  if (job.action === 'update' && job.kind !== 'device-primary') {
+    if (!item.existing || !item.existing.id) throw NetBox.error('缺少远端 ID，无法更新「' + NetBox.itemName(item) + '」');
+    payload.id = NetBox.numericId(item.existing.id);
+    if (!payload.id) throw NetBox.error('远端 ID 不是有效数字，无法更新「' + NetBox.itemName(item) + '」');
+  }
+  if (job.kind === 'interface' && job.action === 'create') {
+    var deviceId = NetBox.remoteItemId(item.deviceItem);
+    if (!deviceId) throw NetBox.error('所属设备尚未返回 ID，接口「' + NetBox.itemName(item) + '」无法创建');
+    payload.device = NetBox.numericId(deviceId);
+    if (!payload.device) throw NetBox.error('所属设备 ID 不是有效数字，接口「' + NetBox.itemName(item) + '」无法创建');
+  }
+  if (job.kind === 'ip' && item.assignee && !item.assignmentBlocked) {
+    var interfaceId = NetBox.remoteItemId(item.assignee);
+    if (!interfaceId) throw NetBox.error('关联接口尚未返回 ID，IP「' + NetBox.itemName(item) + '」无法关联');
+    payload.assigned_object_type = 'dcim.interface';
+    payload.assigned_object_id = NetBox.numericId(interfaceId);
+    if (!payload.assigned_object_id) throw NetBox.error('关联接口 ID 不是有效数字，IP「' + NetBox.itemName(item) + '」无法关联');
+  }
+  if (job.kind === 'device-primary') {
+    var primaryDeviceId = NetBox.remoteItemId(item.deviceItem);
+    var primaryIpId = NetBox.remoteItemId(item.ipItem);
+    if (!primaryDeviceId) throw NetBox.error('设备尚未返回 ID，无法设置主 IPv4「' + NetBox.itemName(item) + '」');
+    if (!primaryIpId) throw NetBox.error('主 IPv4 尚未返回 ID，无法更新设备「' + NetBox.itemName(item) + '」');
+    payload = { id: NetBox.numericId(primaryDeviceId), primary_ip4: NetBox.numericId(primaryIpId) };
+    if (!payload.id || !payload.primary_ip4) throw NetBox.error('设备或主 IPv4 ID 不是有效数字，无法设置主 IPv4');
+  }
+  return payload;
+};
+NetBox.prepareJob = function (job) {
+  var ready = [], blocked = [];
+  job.items.forEach(function (item) {
+    try {
+      item.runtimePayload = NetBox.prepareJobItem(job, item);
+      ready.push(item);
+    } catch (e) {
+      blocked.push({ item: item, message: e.message || String(e) });
+    }
+  });
+  return { items: ready, blocked: blocked };
 };
 NetBox.responseRows = function (data) {
   if (Array.isArray(data)) return data;
   if (data && Array.isArray(data.results)) return data.results;
+  if (data && data.id != null) return [data];
   return [];
 };
 NetBox.linkResponse = function (job, response) {
   var rows = NetBox.responseRows(response);
-  var keyOf = function (row) { return job.kind === 'prefix' ? NetBox.normalizedPrefix(row && row.prefix) : NetBox.addressOnly(row && row.address); };
+  var keyOf = function (row) {
+    if (job.kind === 'prefix') return NetBox.normalizedPrefix(row && row.prefix);
+    if (job.kind === 'device' || job.kind === 'device-primary') return NetBox.normalizeKey(row && row.name);
+    if (job.kind === 'interface') return NetBox.normalizeKey(row && row.name);
+    return NetBox.addressOnly(row && row.address);
+  };
+  var matches = function (item, row) {
+    if (!row || row.id == null) return false;
+    if (job.kind === 'prefix') return keyOf(row) === item.key;
+    if (job.kind === 'device' || job.kind === 'device-primary') return keyOf(row) === NetBox.normalizeKey(item.key);
+    if (job.kind === 'interface') {
+      if (keyOf(row) !== NetBox.normalizeKey(item.local.name)) return false;
+      var expectedDevice = NetBox.remoteItemId(item.deviceItem);
+      return !expectedDevice || !NetBox.remoteDeviceId(row) || NetBox.remoteDeviceId(row) === expectedDevice;
+    }
+    return keyOf(row) === item.key;
+  };
   job.items.forEach(function (item, index) {
     var remote = rows[index] || null;
-    if (remote && keyOf(remote) !== item.key) remote = null;
+    if (remote && !matches(item, remote)) remote = null;
     if (!remote) {
-      remote = rows.filter(function (x) { return keyOf(x) === item.key; })[0] || item.existing;
+      remote = rows.filter(function (x) { return matches(item, x); })[0] || item.existing;
     }
     if (!remote || !remote.id) return;
-    var link = { id: remote.id, url: remote.url || '' , syncedAt: nowIso() };
-    if (job.kind === 'prefix') item.local._netbox = link;
-    else item.local.record._netbox = link;
+    if (job.kind === 'prefix') {
+      item.local._netbox = { id: remote.id, url: remote.url || '', syncedAt: nowIso() };
+    } else if (job.kind === 'device') {
+      item.remote = remote;
+      item.records.forEach(function (row) { NetBox.rememberLink(row.record, 'device', remote); });
+    } else if (job.kind === 'interface') {
+      item.remote = remote;
+      item.records.forEach(function (row) { NetBox.rememberLink(row.record, 'interface', remote); });
+    } else if (job.kind === 'ip') {
+      item.remote = remote;
+      NetBox.rememberLink(item.local.record, item.linkKind || 'ip', remote);
+    } else if (job.kind === 'device-primary') {
+      item.deviceItem.remote = remote;
+    }
   });
 };
 NetBox.execute = function () {
@@ -2976,19 +3546,21 @@ NetBox.execute = function () {
   function run(index) {
     if (index >= jobs.length) return NetBox.finishSync();
     var job = jobs[index];
-    NetBox.state.progress = '正在' + (job.action === 'create' ? '新增' : '更新') + ' ' + (job.kind === 'prefix' ? '网段' : 'IP 地址') + '（' + job.items.length + ' 项）…';
+    NetBox.state.progress = '正在' + (job.action === 'create' ? '新增' : '更新') + ' ' + NetBox.jobLabel(job) + '（' + job.items.length + ' 项）…';
     NetBox.renderSync();
-    var payload = job.items.map(function (item) {
-      var p = Object.assign({}, item.payload);
-      if (job.action === 'update') p.id = item.existing.id;
-      return p;
+    var prepared = NetBox.prepareJob(job);
+    prepared.blocked.forEach(function (blocked) {
+      NetBox.state.result.failures.push({ job: job, item: blocked.item, message: blocked.message });
     });
+    if (!prepared.items.length) return run(index + 1);
+    var requestJob = Object.assign({}, job, { items: prepared.items });
+    var payload = prepared.items.map(function (item) { return item.runtimePayload; });
     NetBox.request(job.endpoint, { method: job.method, body: JSON.stringify(payload) }).then(function (data) {
-      NetBox.linkResponse(job, data);
-      NetBox.state.result.success.push({ job: job, count: job.items.length });
+      NetBox.linkResponse(requestJob, data);
+      NetBox.state.result.success.push({ job: requestJob, count: prepared.items.length });
       run(index + 1);
     }).catch(function (e) {
-      NetBox.state.result.failures.push({ job: job, message: e.message });
+      NetBox.state.result.failures.push({ job: requestJob, message: e.message });
       run(index + 1);
     });
   }
@@ -3001,7 +3573,9 @@ NetBox.finishSync = function () {
   NetBox.state.step = 'result';
   var success = result.success.reduce(function (n, x) { return n + x.count; }, 0);
   var body = '<div class="nb-result ' + (result.failures.length ? 'error' : 'ok') + '"><strong>同步完成</strong><br>成功处理 ' + success + ' 项' + (result.failures.length ? '，' + result.failures.length + ' 个批次失败。' : '。') + '</div>';
-  if (result.failures.length) body += '<div class="nb-error">' + result.failures.map(function (x) { return esc((x.job.kind === 'prefix' ? '网段' : 'IP 地址') + ' ' + (x.job.action === 'create' ? '新增' : '更新') + '：' + x.message); }).join('\n') + '</div>';
+  if (result.failures.length) body += '<div class="nb-error">' + result.failures.map(function (x) {
+    return esc(NetBox.jobLabel(x.job) + (x.item ? '「' + NetBox.itemName(x.item) + '」' : '') + ' ' + (x.job.action === 'create' ? '新增' : '更新') + '：' + x.message);
+  }).join('\n') + '</div>';
   body += '<div class="nb-details">远端 ID 和 URL 已写入本地记录，Token 未保存。失败批次不会自动重试，可返回配置重新读取现状。</div>';
   $('#nb-body').innerHTML = body;
   var foot = $('#nb-foot'); foot.innerHTML = '';
@@ -3372,6 +3946,113 @@ function runSelftest() {
     eq(jobs[0].items[0].existing.id, 7);
     eq(jobs[1].items[0].existing.id, 8);
     Store.state = oldState;
+  });
+  t('NetBox MAC 与 DCIM 创建计划', function () {
+    var oldData = Store.state, oldConfig = {
+      scope: NetBox.state.scope, dcimMode: NetBox.state.dcimMode, siteId: NetBox.state.siteId,
+      roleId: NetBox.state.roleId, deviceTypeId: NetBox.state.deviceTypeId,
+      interfaceType: NetBox.state.interfaceType, deviceStatus: NetBox.state.deviceStatus,
+      mgmtPolicy: NetBox.state.mgmtPolicy
+    };
+    try {
+      Store.state = { data: { subnets: [{ id: 's1', name: '边缘网', cidr: '10.0.0.0/30', note: '', ips: {
+        '10.0.0.1': { status: 'assigned', name: 'edge-1', iface: 'Gi0/1', mac: '0011.2233.4455', purpose: '边界', deviceType: 'router', mgmtIp: '192.0.2.10' },
+        '10.0.0.2': { status: 'assigned', name: 'edge-1', iface: 'Gi0/2', mac: '00-11-22-33-44-66' }
+      } }] } };
+      NetBox.state.scope = 'dcim'; NetBox.state.dcimMode = 'create'; NetBox.state.siteId = '1';
+      NetBox.state.roleId = '2'; NetBox.state.deviceTypeId = '3'; NetBox.state.interfaceType = '1000base-t';
+      NetBox.state.deviceStatus = 'active'; NetBox.state.mgmtPolicy = 'primary';
+      var remote = { prefixes: [], ips: [], dcim: {
+        sites: [{ id: 1, name: 'HQ' }], deviceTypes: [{ id: 3, model: 'Router', slug: 'router' }],
+        roles: [{ id: 2, name: 'Network' }], devices: [], interfaces: []
+      } };
+      var plan = NetBox.buildPlan(remote);
+      eq(NetBox.normalizeMac('0011.2233.4455'), '00:11:22:33:44:55');
+      eq(plan.devices.length, 1);
+      eq(plan.devices[0].action, 'create');
+      eq(plan.devices[0].payload.device_type, 3);
+      eq(plan.devices[0].payload.role, 2);
+      eq(plan.devices[0].payload.site, 1);
+      eq(plan.interfaces.length, 2);
+      eq(plan.interfaces[0].payload.device, undefined);
+      eq(plan.interfaces[0].payload.mac_address, '00:11:22:33:44:55');
+      eq(plan.ips.some(function (item) { return item.key === '192.0.2.10' && item.management; }), true);
+      eq(plan.dcim.primary.length, 1);
+      var jobs = NetBox.jobs(plan).map(function (job) { return job.kind; });
+      eq(jobs.indexOf('device') < jobs.indexOf('interface'), true);
+      eq(jobs.indexOf('interface') < jobs.indexOf('ip'), true);
+      eq(jobs.indexOf('ip') < jobs.indexOf('device-primary'), true);
+      plan.devices[0].remote = { id: 10, name: 'edge-1', site: { id: 1 } };
+      var interfaceJob = NetBox.jobs(plan).filter(function (job) { return job.kind === 'interface'; })[0];
+      var preparedInterface = NetBox.prepareJob(interfaceJob).items[0];
+      eq(preparedInterface.runtimePayload.device, 10);
+      preparedInterface.remote = { id: 20, name: preparedInterface.local.name, device: { id: 10 } };
+      var ipItem = plan.ips.filter(function (item) { return item.key === '10.0.0.1'; })[0];
+      eq(NetBox.prepareJob({ kind: 'ip', action: 'create', items: [ipItem] }).items[0].runtimePayload.assigned_object_id, 20);
+      var mgmt = plan.ips.filter(function (item) { return item.key === '192.0.2.10'; })[0];
+      mgmt.remote = { id: 30, address: '192.0.2.10/32' };
+      var primaryJob = NetBox.jobs(plan).filter(function (job) { return job.kind === 'device-primary'; })[0];
+      var primary = NetBox.prepareJob(primaryJob).items[0];
+      eq(primary.runtimePayload.id, 10);
+      eq(primary.runtimePayload.primary_ip4, 30);
+    } finally {
+      Store.state = oldData;
+      Object.keys(oldConfig).forEach(function (key) { NetBox.state[key] = oldConfig[key]; });
+    }
+  });
+  t('NetBox 管理 IP 链接不覆盖普通 IP', function () {
+    var record = { _netbox: { id: 8, url: '/api/ipam/ip-addresses/8/' } };
+    NetBox.rememberLink(record, 'management', { id: 30, url: '/api/ipam/ip-addresses/30/' });
+    eq(record._netbox.id, 8);
+    eq(record._netbox.management.id, 30);
+    eq(NetBox.remoteLink(record, 'ip').id, 8);
+    eq(NetBox.remoteLink(record, 'management').id, 30);
+  });
+  t('NetBox 重复 MAC 会跳过接口', function () {
+    var oldData = Store.state, oldConfig = {
+      scope: NetBox.state.scope, dcimMode: NetBox.state.dcimMode, siteId: NetBox.state.siteId,
+      roleId: NetBox.state.roleId, deviceTypeId: NetBox.state.deviceTypeId, mgmtPolicy: NetBox.state.mgmtPolicy
+    };
+    try {
+      Store.state = { data: { subnets: [{ id: 's1', name: '网段', cidr: '10.0.0.0/30', note: '', ips: {
+        '10.0.0.1': { status: 'assigned', name: 'edge-1', iface: 'Gi0/1', mac: '0011.2233.4455' },
+        '10.0.0.2': { status: 'assigned', name: 'edge-1', iface: 'Gi0/2', mac: '00:11:22:33:44:55' }
+      } }] } };
+      NetBox.state.scope = 'dcim'; NetBox.state.dcimMode = 'create'; NetBox.state.siteId = '1';
+      NetBox.state.roleId = '2'; NetBox.state.deviceTypeId = '3'; NetBox.state.mgmtPolicy = 'ignore';
+      var plan = NetBox.buildPlan({ prefixes: [], ips: [], dcim: {
+        sites: [{ id: 1, name: 'HQ' }], deviceTypes: [{ id: 3, model: 'Router', slug: 'router' }],
+        roles: [{ id: 2, name: 'Network' }], devices: [], interfaces: []
+      } });
+      eq(plan.interfaces.length, 2);
+      eq(plan.interfaces[0].action, 'skip');
+      eq(plan.interfaces[1].action, 'skip');
+    } finally {
+      Store.state = oldData;
+      Object.keys(oldConfig).forEach(function (key) { NetBox.state[key] = oldConfig[key]; });
+    }
+  });
+  t('NetBox 已有关联对象不自动改绑', function () {
+    var oldData = Store.state, oldConfig = {
+      scope: NetBox.state.scope, dcimMode: NetBox.state.dcimMode, siteId: NetBox.state.siteId,
+      roleId: NetBox.state.roleId, deviceTypeId: NetBox.state.deviceTypeId, mgmtPolicy: NetBox.state.mgmtPolicy
+    };
+    try {
+      Store.state = { data: { subnets: [{ id: 's1', name: '网段', cidr: '10.0.0.0/30', note: '', ips: {
+        '10.0.0.1': { status: 'assigned', name: 'edge-1', iface: 'Gi0/1' }
+      } }] } };
+      NetBox.state.scope = 'dcim'; NetBox.state.dcimMode = 'existing'; NetBox.state.siteId = '1'; NetBox.state.mgmtPolicy = 'ignore';
+      var plan = NetBox.buildPlan({ prefixes: [], ips: [{ id: 50, address: '10.0.0.1/32', status: 'active', assigned_object_type: 'dcim.interface', assigned_object_id: 999 }], dcim: {
+        sites: [{ id: 1, name: 'HQ' }], deviceTypes: [], roles: [], devices: [{ id: 10, name: 'edge-1', site: { id: 1 } }],
+        interfaces: [{ id: 20, name: 'Gi0/1', device: { id: 10 } }]
+      } });
+      var item = plan.ips.filter(function (entry) { return entry.key === '10.0.0.1'; })[0];
+      eq(item.assignmentBlocked, true);
+      eq(item.payload.assigned_object_id, undefined);
+    } finally {
+      Store.state = oldData;
+      Object.keys(oldConfig).forEach(function (key) { NetBox.state[key] = oldConfig[key]; });
+    }
   });
 
   var asyncPending = 0;

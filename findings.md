@@ -67,10 +67,17 @@
 
 - IPv6 remains excluded because IPViewer currently models IPv4 only.
 - Excel import/export is unrelated to NetBox synchronization; the sync should consume the normalized in-memory records after CSV/JSON/XLSX import.
-- The first implementation now covers the recommended Prefix + IPAddress scope with in-memory credentials, remote diff preview, non-destructive bulk create/update, explicit conflict handling, and persisted remote IDs. Device/Interface/MAC synchronization remains outside this phase.
+- The implementation now covers Prefix + IPAddress and the optional Device/Interface/MAC scope with in-memory credentials, remote diff preview, non-destructive bulk create/update, explicit conflict handling, and persisted remote IDs. DCIM creation is opt-in; the default policy only associates existing objects.
+- DCIM writes are dependency-aware: create Device first, inject its returned ID into Interface creation, inject Interface IDs into IPAddress assignment, and set `primary_ip4` only after the IP response returns. Existing foreign IP assignments and MAC collisions are reported and left unchanged.
 
 ### First-Stage Regression
 
-- Browser selftest: `35 / 35` passed in Edge.
+- Browser selftest: `38 / 38` passed in Edge.
 - Cross-origin mock NetBox: remote reads, Prefix PATCH, IPAddress POST/PATCH, authentication header, remote-ID persistence, and token non-persistence all passed.
 - Responsive dialog check: desktop `720px` modal; 390px viewport `358px` modal with no body or dialog-body horizontal overflow.
+
+### Second-Stage Regression
+
+- Browser selftest: `42 / 42` passed in Chromium/Edge-compatible runtime.
+- Cross-origin mock NetBox: DCIM catalog reads, Device POST, Interface POST with returned Device ID, IPAddress POST with returned Interface IDs, Device primary IPv4 PATCH, remote-link persistence, and token non-persistence all passed.
+- Responsive DCIM preview: 390px viewport kept the `358px` dialog and page/body widths at `390px`; long preview content remained internally scrollable without horizontal page overflow.

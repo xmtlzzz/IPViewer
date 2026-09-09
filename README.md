@@ -44,7 +44,7 @@
 
 **失误保护**：导入/恢复操作前自动备份当前数据，底部状态栏提供「恢复上次导入前备份」。
 
-### NetBox 同步（第一阶段）
+### NetBox 同步（第一、二阶段）
 
 顶部「导入 NetBox」支持将本地网段和已登记 IPv4 地址预览并同步到 NetBox：
 
@@ -52,7 +52,11 @@
 - 主机名映射到 `dns_name`，用途映射到 `description`，备注映射到 `comments`
 - 空闲地址不创建；冲突地址默认跳过，也可在配置中明确映射为 `deprecated`
 - 同步前先读取远端并展示新增/更新/跳过差异；默认不删除远端对象
-- 设备名称、管理 IP、接口、MAC、设备类型暂不创建 NetBox DCIM 对象，仅在预览中提示未同步字段
+- 第二阶段可选同步 Device、Interface 和接口 MAC：本地设备名称按站点匹配，接口按设备和接口名称匹配
+- 设备策略默认为「仅关联已有」；选择「缺失时创建」时必须指定 Site、Device Role、Device Type，并使用所选 Interface Type 和设备状态
+- 管理 IP 可作为额外 `IPAddress` 创建，并在接口和 IP 成功后设置为设备 `primary_ip4`；选择忽略时不会写入 NetBox
+- 写入顺序固定为 Prefix → Device → Interface → IPAddress → Device 主 IPv4；创建返回的远端 ID 会自动注入后续请求
+- 已有不同的 MAC、重复设备/接口、MAC 占用冲突或 IP 已关联其他对象时不会自动覆盖/改绑，风险会出现在预览和失败报告中
 
 直接浏览器同步需要通过 HTTP 服务打开页面，并在 NetBox 中将页面来源加入精确的 CORS 白名单。例如：
 
@@ -101,7 +105,7 @@ npx wrangler deploy
 
 ## 自测
 
-在地址栏后加 `?selftest` 打开自检页面（`index.html?selftest`），自动运行 38 条断言覆盖 CIDR 计算、CSV 解析、列映射、zip/xlsx 编解码、NetBox 映射与 Worker 请求配置等核心逻辑。
+在地址栏后加 `?selftest` 打开自检页面（`index.html?selftest`），自动运行 42 条断言覆盖 CIDR 计算、CSV 解析、列映射、zip/xlsx 编解码、NetBox IPAM/DCIM 映射与 Worker 请求配置等核心逻辑。
 
 ## 技术说明
 
