@@ -295,11 +295,11 @@ dialog::backdrop { background:rgba(0,0,0,.35); }
   --control-h:34px;
   --control-radius:6px;
   --surface-popover:var(--panel);
-  --shadow-popover:0 10px 24px rgba(15,23,42,.14);
+  --shadow-popover:0 8px 14px rgba(15,23,42,.14);
   --shadow-dialog:0 18px 48px rgba(15,23,42,.22);
 }
 [data-theme="dark"] {
-  --shadow-popover:0 10px 24px rgba(0,0,0,.34);
+  --shadow-popover:0 8px 14px rgba(0,0,0,.34);
   --shadow-dialog:0 18px 48px rgba(0,0,0,.46);
 }
 button:focus:not(:focus-visible) { outline:none; }
@@ -440,40 +440,48 @@ dialog::backdrop { background:rgba(15,23,42,.42); }
 /* Shared popovers and transient surfaces. */
 #ctx-menu, .export-menu {
   background:var(--surface-popover);
-  border:0;
-  border-radius:8px;
+  border:1px solid var(--border);
+  border-radius:var(--radius);
   box-shadow:var(--shadow-popover);
 }
-#ctx-menu { padding:5px; }
-#ctx-menu button { min-height:32px; border-radius:5px; }
-#ctx-menu .ctx-head { padding:5px 9px 7px; }
+#ctx-menu { padding:4px; }
+#ctx-menu button { min-height:var(--control-h); border-radius:var(--control-radius); }
+#ctx-menu .ctx-head { padding:5px 10px 7px; }
 .export-menu {
   position:fixed;
   z-index:70;
   min-width:176px;
-  padding:5px;
+  padding:4px;
 }
 .export-menu-item {
   display:block;
   width:100%;
-  min-height:34px;
+  min-height:var(--control-h);
   padding:0 11px;
   border:0;
-  border-radius:5px;
+  border-radius:var(--control-radius);
   background:none;
   text-align:left;
   font-size:13px;
 }
-.export-menu-item:hover { background:var(--accent-soft); color:var(--accent); }
+#ctx-menu button:hover, .export-menu-item:hover,
+#ctx-menu button:active, .export-menu-item:active {
+  background:var(--accent-soft);
+  color:var(--accent);
+}
 #batch-bar {
   gap:8px;
   padding:8px 10px 8px 14px;
-  border:0;
-  border-radius:10px;
+  border:1px solid var(--border);
+  border-radius:var(--radius);
   box-shadow:var(--shadow-popover);
 }
-#batch-bar .seg { border:1px solid var(--border); border-radius:var(--control-radius); }
-#batch-bar .seg button { min-height:30px; }
+#batch-bar .cnt,
+#batch-bar .seg button,
+#batch-bar > .btn { white-space:nowrap; }
+#batch-bar .seg { flex:0 0 auto; border:1px solid var(--border); border-radius:var(--control-radius); }
+#batch-bar .seg button { min-height:30px; padding-left:9px; padding-right:9px; }
+#batch-bar > .btn { flex:0 0 auto; }
 .seg button { min-height:var(--control-h); }
 
 /* Import mapping and status rules use the same row rhythm. */
@@ -500,8 +508,57 @@ dialog::backdrop { background:rgba(15,23,42,.42); }
 .map-row label { line-height:1.35; }
 .map-row select { padding:0 9px; }
 #wiz .hint, .rules-hint { line-height:1.55; }
-.rules-disclosure { margin-top:14px !important; border-top:1px solid var(--border); padding-top:12px; }
-.rules-disclosure summary { color:var(--text) !important; font-weight:600; }
+.rules-disclosure {
+  margin-top:14px !important;
+  border:1px solid var(--border);
+  border-radius:var(--control-radius);
+  background:var(--panel2);
+  overflow:hidden;
+}
+.rules-disclosure > summary {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-height:42px;
+  padding:9px 12px;
+  color:var(--text) !important;
+  font-weight:600;
+  line-height:1.45;
+  cursor:pointer;
+  list-style:none;
+  user-select:none;
+  transition:background .15s ease, color .15s ease;
+}
+.rules-disclosure > summary::-webkit-details-marker { display:none; }
+.rules-disclosure > summary::before {
+  content:"";
+  width:7px;
+  height:7px;
+  flex:0 0 7px;
+  border-right:1.5px solid currentColor;
+  border-bottom:1.5px solid currentColor;
+  opacity:.75;
+  transform:rotate(-45deg);
+  transition:transform .15s ease, opacity .15s ease;
+}
+.rules-disclosure[open] > summary::before { transform:rotate(45deg); }
+.rules-disclosure > summary:hover {
+  background:var(--accent-soft);
+  color:var(--accent) !important;
+}
+.rules-disclosure > summary:focus-visible {
+  outline:2px solid var(--accent);
+  outline-offset:-2px;
+}
+.rules-disclosure[open] > summary {
+  border-bottom:1px solid var(--border);
+  background:var(--panel);
+}
+.rules-disclosure > [data-rules-root] {
+  margin:0;
+  padding:12px;
+  background:var(--panel);
+}
 [data-rules-editor] { margin-top:0 !important; }
 .kw-row {
   grid-template-columns:minmax(0,1fr) 132px 34px;
