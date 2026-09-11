@@ -188,6 +188,27 @@ main { flex:1; display:flex; min-height:0; }
 #stats b { color:var(--text); font-size:13px; }
 #stats .warn { color:var(--st-conflict); }
 
+/* ---- feat: adv-search ---- */
+#adv-search {
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:8px 16px; font-size:12.5px;
+  background:var(--panel2); border-bottom:1px solid var(--border);
+}
+#adv-search[hidden] { display:none; }
+#adv-search .adv-lbl { color:var(--muted); }
+#adv-search input[type="text"] {
+  flex:0 1 220px; min-width:130px; padding:4px 10px;
+  border:1px solid var(--border); border-radius:6px; background:var(--panel);
+  font-size:12.5px;
+}
+#adv-search input[type="text"]:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); outline:none; }
+#adv-search select {
+  padding:4px 8px; border:1px solid var(--border); border-radius:6px; background:var(--panel2);
+  font-size:12.5px;
+}
+#adv-search .hbtn { padding:4px 12px; font-size:12.5px; }
+#adv-toggle.on { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); }
+
 /* ---------- grid ---------- */
 #grid-wrap { padding:16px; }
 #grid {
@@ -863,6 +884,24 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
       <button class="hbtn" data-action="grid-png" title="导出格子图为 PNG">导出图片</button>
       <div class="legend" id="legend"></div>
       <button class="hbtn" data-action="conflict-scan" title="扫描所有网段中重复登记的 IP">冲突扫描</button>
+      <button class="hbtn" data-action="adv-toggle" id="adv-toggle" title="高级搜索：IP 前缀 / 按字段关键词过滤">高级</button>
+    </div>
+    <div id="adv-search" hidden>
+      <span class="adv-lbl">IP 前缀</span>
+      <input id="adv-prefix" type="text" placeholder="如 10.0. / 192.168.20." title="仅保留以该前缀开头的 IP（如 10.0. 或 192.168.20.）">
+      <span class="adv-lbl">字段</span>
+      <select id="adv-field" title="关键词匹配的记录字段">
+        <option value="*">全部字段</option>
+        <option value="name">设备名称</option>
+        <option value="hostname">主机名</option>
+        <option value="purpose">用途</option>
+        <option value="note">备注</option>
+        <option value="mac">MAC</option>
+        <option value="mgmtIp">管理IP</option>
+        <option value="iface">使用接口</option>
+      </select>
+      <input id="adv-q" type="text" placeholder="字段关键词…" title="在所选字段中查找关键词（子串匹配，不区分大小写）">
+      <button class="hbtn" id="adv-clear" type="button" title="清空高级搜索条件">清除</button>
     </div>
     <div id="stats" hidden></div>
     <div id="grid-wrap"><div id="grid"></div><div id="grid-note" hidden></div></div>
@@ -1439,6 +1478,7 @@ var Store = {
         panelOpen: false,
         search: '',
         statusFilter: '',    // '' = 全部
+        adv: { prefix: '', field: '*', q: '' },   // 高级搜索（feat: adv-search）
         collapsedGroups: Data.loadSettings().collapsedGroups || {}
       }
     };
@@ -1673,6 +1713,15 @@ var ACTIONS = {
     var next = effective === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
     st.settings.theme = next;
+  },
+  /* ---- feat: adv-search ---- */
+  'set-adv': function (st, patch) {
+    var cur = Object.assign({ prefix: '', field: '*', q: '' }, st.ui.adv || {});
+    patch = patch || {};
+    if ('prefix' in patch) cur.prefix = String(patch.prefix == null ? '' : patch.prefix).trim();
+    if ('field' in patch) cur.field = String(patch.field || '*');
+    if ('q' in patch) cur.q = String(patch.q == null ? '' : patch.q).trim();
+    st.ui.adv = cur;
   }
 };
 
@@ -1851,6 +1900,11 @@ Render.grid = function (s) {
   var st = Store.state;
   var q = st.ui.search.trim().toLowerCase();
   var filter = st.ui.statusFilter;
+  var adv = st.ui.adv || { prefix: '', field: '*', q: '' };   // 容错：旧状态/桩测试可能无 adv
+  var advPrefix = (adv.prefix || '').trim().toLowerCase();
+  var advQ = (adv.q || '').trim().toLowerCase();
+  var advField = adv.field || '*';
+  var advActive = !!(advPrefix || advQ);
   var html = '';
   var lastBlockPrefix = null;
   var showSep = info.pre < 24;   // /23 及更小前缀：每 256 地址块加分隔行
@@ -1876,8 +1930,23 @@ Render.grid = function (s) {
         }));
     }
     if (filter && status !== filter) matched = false;
-    if ((q || filter) && !matched) cls += ' dim';
-    if ((q || filter) && matched) cls += ' hit';
+    if (advActive) {
+      // 高级搜索约束（与顶部搜索/图例筛选叠加，AND 语义）
+      var advIp = ip.toLowerCase();
+      if (advPrefix && advIp.indexOf(advPrefix) !== 0) matched = false;
+      if (matched && advQ) {
+        if (advField === '*') {
+          matched = advIp.indexOf(advQ) >= 0 ||
+            (rec && ['name', 'hostname', 'purpose', 'note', 'mac', 'mgmtIp', 'iface'].some(function (f) {
+              return rec[f] && String(rec[f]).toLowerCase().indexOf(advQ) >= 0;
+            }));
+        } else {
+          matched = !!(rec && rec[advField] && String(rec[advField]).toLowerCase().indexOf(advQ) >= 0);
+        }
+      }
+    }
+    if ((q || filter || advActive) && !matched) cls += ' dim';
+    if ((q || filter || advActive) && matched) cls += ' hit';
     if (ip === st.ui.selectedIp) cls += ' sel';
     var label = rec && (rec.name || rec.hostname) ? (rec.name || rec.hostname) : STATUS_LABEL[status];
     var tag = role === 'network' ? ' 网' : role === 'broadcast' ? ' 广' : '';
@@ -6721,6 +6790,60 @@ function runSelftest() {
     } finally { Store.state = oldData; IO.download = oldDl; }
   });
 
+  /* ---- feat: adv-search：高级搜索筛选 ---- */
+  t('高级搜索 IP 前缀 dim/hit', function () {
+    var old = Store.state;
+    try {
+      Store.state = { data: { subnets: [{ id: 's1', name: 'T', cidr: '10.0.0.0/29', note: '', ips: {
+        '10.0.0.1': { status: 'assigned', name: 'edge-1' },
+        '10.0.0.2': { status: 'assigned', hostname: 'edge-1' }
+      } }], groups: [] }, settings: { showNetBc: true }, ui: { selectedIp: '', search: '', statusFilter: '' } };
+      Store.state.ui.adv = { prefix: '10.0.0.1', field: '*', q: '' };
+      Render.grid(Store.state.data.subnets[0]);
+      eq(document.querySelectorAll('#grid .cell.hit').length, 1, '仅 10.0.0.1 命中');
+      eq(document.querySelectorAll('#grid .cell.dim').length, 7, '前缀外 7 格变暗');
+    } finally { Store.state = old; }
+  });
+  t('高级搜索字段限定与 AND 语义', function () {
+    var old = Store.state;
+    try {
+      Store.state = { data: { subnets: [{ id: 's1', name: 'T', cidr: '10.0.0.0/29', note: '', ips: {
+        '10.0.0.1': { status: 'assigned', name: 'edge-1' },
+        '10.0.0.2': { status: 'assigned', hostname: 'edge-1' }
+      } }], groups: [] }, settings: { showNetBc: true }, ui: { selectedIp: '', search: '', statusFilter: '' } };
+      var s = Store.state.data.subnets[0];
+      Store.state.ui.adv = { prefix: '', field: 'name', q: 'edge-1' };
+      Render.grid(s);
+      eq(document.querySelectorAll('#grid .cell.hit').length, 1, 'field=name 仅 .1 命中（.2 hostname 不算）');
+      Store.state.ui.adv = { prefix: '', field: '*', q: 'edge-1' };
+      Render.grid(s);
+      eq(document.querySelectorAll('#grid .cell.hit').length, 2, 'field=* 时 hostname 也命中');
+      Store.state.ui.adv = { prefix: '10.0.0.2', field: 'name', q: 'edge-1' };
+      Render.grid(s);
+      eq(document.querySelectorAll('#grid .cell.hit').length, 0, '前缀+字段 AND 不满足则无命中');
+      eq(document.querySelectorAll('#grid .cell.dim').length, 8, 'AND 不满足 8 格全暗');
+    } finally { Store.state = old; }
+  });
+  t('高级搜索清除后恢复', function () {
+    var old = Store.state;
+    try {
+      Store.state = { data: { subnets: [{ id: 's1', name: 'T', cidr: '10.0.0.0/29', note: '', ips: {
+        '10.0.0.1': { status: 'assigned', name: 'edge-1' }
+      } }], groups: [] }, settings: { showNetBc: true }, ui: { selectedIp: '', search: '', statusFilter: '' } };
+      var s = Store.state.data.subnets[0];
+      Store.state.ui.adv = { prefix: '10.0.0.1', field: '*', q: '' };
+      Render.grid(s);
+      eq(document.querySelectorAll('#grid .cell.dim').length, 7, '筛选中 7 格变暗');
+      Store.state.ui.adv = { prefix: '', field: '*', q: '' };
+      Render.grid(s);
+      eq(document.querySelectorAll('#grid .cell.dim').length, 0, '清除后无变暗');
+      eq(document.querySelectorAll('#grid .cell.hit').length, 0, '清除后无高亮');
+      delete Store.state.ui.adv;
+      Render.grid(s);
+      eq(document.querySelectorAll('#grid .cell.dim').length, 0, '缺 adv 状态时容错不变暗');
+    } finally { Store.state = old; }
+  });
+
   var asyncPending = 0;
   var done = cases.length;
   var html = '<h3>IPViewer 自测</h3>';
@@ -6763,6 +6886,45 @@ function runSelftest() {
     box.querySelectorAll('h3')[1].textContent = all + ' / ' + tot + ' 通过';
   });
 }
+
+/* ============================================================
+ * [11.5] feat: adv-search —— 高级搜索交互
+ * （不改 Events.init 的 switch：adv-toggle 由本块自己的委托监听处理）
+ * ============================================================ */
+(function () {
+  var box = $('#adv-search'), prefix = $('#adv-prefix'), field = $('#adv-field'), q = $('#adv-q');
+  if (!box) return;
+  function sync() {
+    var a = Store.state.ui.adv || (Store.state.ui.adv = { prefix: '', field: '*', q: '' });
+    a.prefix = prefix.value.trim();
+    a.field = field.value || '*';
+    a.q = q.value.trim();
+    Render.all();
+  }
+  function resetAdv() {
+    prefix.value = ''; q.value = ''; field.value = '*';
+    Store.state.ui.adv = { prefix: '', field: '*', q: '' };
+    Render.all();
+  }
+  document.addEventListener('click', function (ev) {
+    var btn = ev.target.closest('[data-action="adv-toggle"]');
+    if (!btn) return;
+    box.hidden = !box.hidden;
+    btn.classList.toggle('on', !box.hidden);
+  });
+  prefix.addEventListener('input', debounce(sync, 120));
+  field.addEventListener('change', sync);
+  q.addEventListener('input', debounce(sync, 120));
+  $('#adv-clear').addEventListener('click', resetAdv);
+  // 欢迎页（无选中网段）时收起，避免浮在欢迎屏上
+  Store.sub(function () {
+    if (!Store.activeSubnet()) {
+      box.hidden = true;
+      var btn = $('#adv-toggle');
+      if (btn) btn.classList.remove('on');
+    }
+  });
+})();
 
 /* ============================================================
  * [12] App —— 启动
