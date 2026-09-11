@@ -758,6 +758,10 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
 .snap-row { display:flex; align-items:center; gap:10px; }
 .snap-row .snap-time { flex:1; font-family:Consolas,monospace; }
 .snap-row .snap-size { color:var(--muted); font-size:11px; white-space:nowrap; }
+/* ---- feat: panel-extras ---- */
+.panel-foot { flex-wrap:wrap; }
+#p-nextfree { padding-left:10px; padding-right:10px; }
+#tb-free { padding:3px 10px; font-size:12.5px; }
 </style>
 </head>
 <body>
@@ -809,6 +813,7 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
         <option value="12" selected>中</option>
         <option value="14">大</option>
       </select></label>
+      <button class="btn" id="tb-free" title="打开当前网段第一个空闲地址">跳到空闲</button>
       <div class="legend" id="legend"></div>
     </div>
     <div id="stats" hidden></div>
@@ -861,9 +866,11 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
       </select>
     </div>
     <div class="fld"><label>备注</label><textarea id="p-note" rows="3"></textarea></div>
+    <div class="fld meta" id="p-meta" style="font-size:11px;color:var(--muted)"></div>
   </div>
   <div class="panel-foot">
     <button class="btn primary" data-action="panel-save">保存</button>
+    <button class="btn" id="p-nextfree" title="从当前 IP 起找下一个空闲地址">下一个空闲</button>
     <button class="btn" data-action="panel-prev" title="上一个 IP">←</button>
     <button class="btn" data-action="panel-next" title="下一个 IP">→</button>
     <button class="btn danger" data-action="panel-clear">清除登记</button>
@@ -1176,6 +1183,32 @@ Calc.idxOfIp = function (ipStr, networkUint, broadcastUint) {
   var u = Calc.ipToUint(ipStr);
   if (u === null || u < networkUint || u > broadcastUint) return -1;
   return u - networkUint;
+};
+
+/* ---------- 下一个空闲 IP 推荐（feat: panel-extras） ---------- */
+// 从 startIp（含）起向后找第一个「host 角色 且 ips 中无记录」的地址；
+// 扫到网段尾（broadcast）后回到第一个 host 位继续扫一圈，全满返回 null。
+// /31、/32 无网络/广播位，全部地址按 host 处理。
+Calc.nextFreeIp = function (subnet, startIp) {
+  if (!subnet || !subnet.cidr) return null;
+  var info;
+  try { info = Calc.parseCidr(subnet.cidr); } catch (e) { return null; }
+  var firstHost = info.pre <= 30 ? 1 : 0;   // /31 /32 从 0 号格起
+  var last = info.total - 1;
+  var start = Calc.idxOfIp(String(startIp == null ? '' : startIp).trim(), info.network, info.broadcast);
+  if (start < firstHost) start = firstHost; // 起点不在网段内或为网络位 → 从第一个 host 位起
+  var used = subnet.ips || {};
+  for (var pass = 0; pass < 2; pass++) {
+    // 第一圈：起点→broadcast；第二圈：第一个 host 位→起点前（不重复扫起点）
+    var i = pass === 0 ? start : firstHost;
+    var end = pass === 0 ? last : start - 1;
+    for (; i <= end; i++) {
+      if (Calc.roleOf(i, info.total, info.pre) !== 'host') continue;
+      var ip = Calc.idxToIp(info.network, i);
+      if (!used[ip]) return ip;
+    }
+  }
+  return null;
 };
 
 /* ============================================================
@@ -1888,6 +1921,14 @@ Panel.render = function () {
   $('#f-mask').classList.remove('invalid');
   $('#f-mac').classList.remove('invalid');
 
+  // feat: panel-extras —— 登记/更新时间（无记录清空；无 createdAt 显示 —）
+  var meta = $('#p-meta');
+  if (meta) {
+    meta.textContent = s.ips[ip]
+      ? '登记 ' + fmtTime(rec.createdAt) + ' · 更新 ' + fmtTime(rec.updatedAt)
+      : '';
+  }
+
   panel.classList.add('open'); mask.classList.add('open');
 };
 Panel.collect = function () {
@@ -2366,6 +2407,39 @@ Batch.menu = function (ev, ip) {
     }
   };
 };
+
+/* ============================================================
+ * [7e] PanelExtras —— 下一个空闲 IP 跳转（feat: panel-extras）
+ * ============================================================ */
+var PanelExtras = {};
+// 从 fromIp（null = 网段第一个 host 位）找下一个空闲地址并打开面板
+PanelExtras.jump = function (fromIp) {
+  var s = Store.activeSubnet();
+  if (!s) return;
+  var ip = Calc.nextFreeIp(s, fromIp);
+  if (ip) {
+    Panel.open(ip);
+    toast('下一个空闲：' + ip);
+  } else {
+    toast('该网段已无空闲地址', { err: true });
+  }
+};
+// 面板按钮：从当前选中的 IP 起
+PanelExtras.nextFromPanel = function () {
+  PanelExtras.jump(Store.state.ui.selectedIp);
+};
+// 工具条按钮：从网段头起
+PanelExtras.firstFree = function () {
+  PanelExtras.jump(null);
+};
+/* 事件绑定：按钮为静态 HTML，脚本位于 body 末尾，可直接按 id 绑定
+   （不经过 Events.init 的 data-action 委托） */
+(function bindPanelExtras() {
+  var nf = $('#p-nextfree');
+  if (nf) nf.addEventListener('click', PanelExtras.nextFromPanel);
+  var tf = $('#tb-free');
+  if (tf) tf.addEventListener('click', PanelExtras.firstFree);
+})();
 
 /* ============================================================
  * [8] Dialog —— 通用确认框 / 输入框
@@ -6049,6 +6123,82 @@ function runSelftest() {
       } catch (e) {}
       Store.state = oldState;
       Store.state.data = oldData;
+    }
+  });
+
+  /* ---------- feat: panel-extras（nextFreeIp + 面板登记/更新时间） ---------- */
+  t('nextFreeIp 中间空位与起点跳过', function () {
+    var s = { cidr: '10.9.0.0/28', ips: {
+      '10.9.0.1': { status: 'assigned', name: 'a' },
+      '10.9.0.2': { status: 'assigned', name: 'b' },
+      '10.9.0.5': { status: 'assigned', name: 'c' }
+    } };
+    eq(Calc.nextFreeIp(s, '10.9.0.1'), '10.9.0.3');
+    eq(Calc.nextFreeIp(s, '10.9.0.2'), '10.9.0.3');   // 起点已用 → 向后
+    eq(Calc.nextFreeIp(s, '10.9.0.4'), '10.9.0.4');   // 起点本身空闲（含起点）
+    eq(Calc.nextFreeIp(s, '10.9.0.5'), '10.9.0.6');
+    eq(Calc.nextFreeIp(s, '10.9.0.0'), '10.9.0.3');   // 网络位起点 → 跳过
+    eq(Calc.nextFreeIp(s, '10.9.0.15'), '10.9.0.3');  // 广播位起点 → 跳过
+  });
+  t('nextFreeIp 尾部回绕与全满', function () {
+    var ips = {};
+    ['10.9.0.10', '10.9.0.11', '10.9.0.12', '10.9.0.13', '10.9.0.14'].forEach(function (ip) {
+      ips[ip] = { status: 'assigned' };
+    });
+    var s = { cidr: '10.9.0.0/28', ips: ips };
+    eq(Calc.nextFreeIp(s, '10.9.0.12'), '10.9.0.1');  // 尾部全满 → 回绕到第一个 host 位
+    var full = { cidr: '10.9.0.0/28', ips: {} };
+    for (var i = 1; i <= 14; i++) full.ips[Calc.idxToIp(Calc.ipToUint('10.9.0.0'), i)] = { status: 'assigned' };
+    eq(Calc.nextFreeIp(full, '10.9.0.1'), null);
+    eq(Calc.nextFreeIp(full, '10.9.0.14'), null);
+  });
+  t('nextFreeIp /31 与 /32 网段', function () {
+    var s31 = { cidr: '10.0.0.4/31', ips: {} };
+    eq(Calc.nextFreeIp(s31, '10.0.0.4'), '10.0.0.4');   // /31 无网络/广播位
+    s31.ips['10.0.0.4'] = { status: 'assigned' };
+    eq(Calc.nextFreeIp(s31, '10.0.0.4'), '10.0.0.5');
+    s31.ips['10.0.0.5'] = { status: 'assigned' };
+    eq(Calc.nextFreeIp(s31, '10.0.0.5'), null);         // 全满
+    var s32 = { cidr: '10.9.9.7/32', ips: {} };
+    eq(Calc.nextFreeIp(s32, '10.9.9.7'), '10.9.9.7');
+    s32.ips['10.9.9.7'] = { status: 'assigned' };
+    eq(Calc.nextFreeIp(s32, '10.9.9.7'), null);
+  });
+  t('Panel 下一个空闲按钮/工具条跳转与登记时间', function () {
+    var old = Store.state;
+    try {
+      Store.state = {
+        data: { groups: [], subnets: [{ id: 'sx', name: 'T', cidr: '10.9.0.0/28', vlan: '', note: '', groupId: '', ips: {
+          '10.9.0.1': { status: 'assigned', name: 'a', updatedAt: nowIso() },
+          '10.9.0.2': { status: 'assigned', name: 'b', updatedAt: nowIso() },
+          '10.9.0.5': { status: 'assigned', name: 'c', updatedAt: nowIso() }
+        } }] },
+        settings: Store.state.settings,
+        ui: { activeSubnetId: 'sx', selectedIp: '10.9.0.2', panelOpen: true, search: '', statusFilter: '', collapsedGroups: {} }
+      };
+      Panel.render();
+      eq($('#panel').classList.contains('open'), true, '面板应打开');
+      eq($('#p-meta').textContent.indexOf('登记 — ') === 0, true, '无 createdAt 应显示 —');
+      eq(/更新 \d{4}\//.test($('#p-meta').textContent), true, '应显示更新时间');
+      $('#p-nextfree').click();
+      eq($('#p-ip').textContent, '10.9.0.3', '下一个空闲应为 10.9.0.3');
+      eq(Store.state.ui.selectedIp, '10.9.0.3');
+      // 只留 .6 空闲 → 工具条「跳到空闲」应打开 .6
+      var s = Store.state.data.subnets[0], net = Calc.ipToUint('10.9.0.0');
+      for (var i = 1; i <= 14; i++) {
+        if (i !== 6) s.ips[Calc.idxToIp(net, i)] = { status: 'assigned' };
+      }
+      $('#tb-free').click();
+      eq($('#p-ip').textContent, '10.9.0.6', '工具条跳到空闲应为 10.9.0.6');
+      // 全满 → 错误提示且面板不跳转
+      s.ips['10.9.0.6'] = { status: 'assigned' };
+      $('#p-nextfree').click();
+      eq($('#p-ip').textContent, '10.9.0.6');
+      var last = $('#toasts').lastElementChild;
+      eq(!!last && last.textContent.indexOf('已无空闲地址') >= 0, true, '应提示已无空闲地址');
+    } finally {
+      Store.state = old;
+      Panel.render();
     }
   });
 
