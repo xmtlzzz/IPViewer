@@ -6035,9 +6035,10 @@ function runSelftest() {
       eq(!!Store.state.ui.collapsedGroups.g1, false);
     } finally { Store.state = oldData; }
   });
-  t('12 列导出含目录列', function () {
+  t('13 列导出含目录与标签列', function () {
     eq(IO.tableHeaders().indexOf('目录') >= 0, true);
-    eq(IO.tableHeaders().length, 13);
+    eq(IO.tableHeaders().indexOf('标签') >= 0, true);
+    eq(IO.tableHeaders().length, 14);
   });
   /* ---------- 网段批量删除 ---------- */
   t('批量删除网段（含记录）', function () {
