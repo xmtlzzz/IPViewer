@@ -81,6 +81,14 @@
 - [x] 旧内核检测（缺 Promise/dialog 提示用 Edge）
 - [x] @media print 打印样式
 
+### P12 网段多选批量删除（2026-09-08 第 6 轮）
+
+- [x] **网段多选批量删除**：侧栏「多选」按钮进入勾选模式（卡片带复选框），点击勾选/取消、Shift 范围选、目录头全选该目录、「全选/取消全选」，底部批量条显示已选数与登记记录数，删除前确认（含记录数警示）；批量删除后激活网段自动切换、清空时回欢迎页。Store 层新增 `subnet-delete-many`（返回删除数）
+- [x] **修复：`Store.act` 不透传返回值**——批量删除后 toast 显示"已删除 undefined 个网段"。act 现在返回 action 的返回值
+- [x] **修复：`?selftest` 桩测试污染真实数据**——桩测试整体替换 Store.state 后 `Store.act` 会把桩数据持久化进 localStorage，测试结束内存恢复但磁盘已脏，后续正常打开会加载出测试垃圾网段。现同步用例执行期间抑制落盘（`Store.suppressPersist`），测试渲染完成即恢复
+- [x] **回归**：内建 selftest 80/80；新增合并回归套件 11/11（`%TEMP%\regress_all.js`，覆盖 P7-P11 关键路径）；网段多选 UI 路径 9/9（`%TEMP%\sidepick_test.js`）；零运行时异常
+- [x] 测试基建迁移：%TEMP% 旧套件被系统清理后已按 todo 预案重写为合并套件（selftest_run / regress_all / sidepick_test）
+
 ### P7 MVP 反馈修复（2026-09-08）
 
 - [x] **面板保存逻辑重做**（用户反馈：空闲格点"保存"无提示且自动变已用）：

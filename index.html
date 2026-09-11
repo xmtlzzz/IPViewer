@@ -1362,11 +1362,13 @@ var Store = {
   act: function (name) {
     var args = Array.prototype.slice.call(arguments, 1);
     if (!ACTIONS[name]) { console.warn('unknown action', name); return; }
-    ACTIONS[name].apply(null, [this.state].concat(args));
+    var ret = ACTIONS[name].apply(null, [this.state].concat(args));
     this.persist();
     this.emit();
+    return ret;
   },
   persist: function () {
+    if (Store.suppressPersist) return; // selftest 桩测试期间禁止写真实存储
     Data.save(this.state.data);
     Data.saveSettings();
     Render.footer();
@@ -5027,6 +5029,9 @@ Events.exportTableMenu = function (ev) {
  * [11] Selftest —— 内建自测（?selftest）
  * ============================================================ */
 function runSelftest() {
+  // 桩测试会整体替换 Store.state 并调用 Store.act → persist()，
+  // 若放行会把桩数据写进 localStorage 污染真实数据，故测试期间抑制落盘
+  Store.suppressPersist = true;
   var cases = [];
   function t(name, fn) {
     try { fn(); cases.push([name, true, '']); }
@@ -5825,6 +5830,8 @@ function runSelftest() {
   box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:var(--panel);color:var(--text);padding:20px;overflow:auto;max-height:70vh;border-bottom:3px solid var(--accent);font-family:Consolas,monospace;font-size:13px';
   box.innerHTML = html;
   document.body.appendChild(box);
+  // 同步用例已跑完，恢复持久化（后续外部自动化在 ?selftest 页仍可验证落盘）
+  Store.suppressPersist = false;
   // 处理返回 Promise 的用例（zip 往返）
   cases.forEach(function (c, idx) { /* 同步结果已渲染 */ });
   // 重新跑异步断言并补渲染
@@ -5876,7 +5883,7 @@ function boot() {
   if (location.search.indexOf('selftest') >= 0) {
     runSelftest();
     // 自测模式下暴露内部句柄供自动化验证
-    window.__test = { Store: Store, Render: Render, Panel: Panel, IO: IO, Data: Data, Calc: Calc, Wizard: Wizard, Rules: Rules, NetBox: NetBox, Dialog: Dialog, Events: Events };
+    window.__test = { Store: Store, Render: Render, Panel: Panel, IO: IO, Data: Data, Calc: Calc, Wizard: Wizard, Rules: Rules, NetBox: NetBox, Dialog: Dialog, Events: Events, SideSel: SideSel, Batch: Batch };
   }
 }
 boot();
