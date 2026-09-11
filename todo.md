@@ -177,11 +177,12 @@
 | **P10 新功能验证 12 项** | **12/12** | Edge CDP（`%TEMP%\p10_test.js`；CSP/右键菜单 3 项/批量 3 项/排序 3 项/越界确认/状态规则） |
 | 导出 xlsx 兼容性 | 通过 | Python openpyxl 打开验证（zip CRC 全对、中文完好、列结构正确） |
 | **华为格式端到端 37 项** | **37/37** | Edge CDP（`tools/cdp-test.js`，真实 xlsx：读取→识别→导入→建目录→模板导出→往返） |
-| **UI DOM 断言 29 项** | **29/29** | Edge CDP（`tools/ui-test.js`，掩码字段/目录分组/折叠/对话框/390px 无溢出） |
+| **UI DOM 断言 47 项** | **47/47** | Edge CDP（`tools/ui-test.js`，多选批量删除/滚动条/目录分组/favicon/390px 无溢出） |
 | **边界用例 21 项** | **21/21** | Edge CDP（`tools/edge-test.js`，掩码继承/行序/模板复现/目录归类/幂等） |
 | **华为格式导出兼容性** | **通过** | openpyxl（`tools/verify_export.py`：A1:F13、列宽、autoFilter、子网回填、VRRP 还原） |
+| **favicon 加载** | **通过** | `tools/verify-favicon.js`（浏览器实载 32×32，无 CSP 拦截）+ `verify_favicon.py`（SVG 合法性） |
 | 运行时异常 | 0 | CDP Runtime.exceptionThrown 监听 |
-| 内建 selftest | 74/74（含异步 zip 检查） | `index.html?selftest` |
+| 内建 selftest | 80/80（含异步 zip 检查） | `index.html?selftest` |
 
 **开发期发现并修复的 bug**：
 1. `IO.Xlsx.read()` 把异步 zip 解压当同步用 → 修复为 Promise 链（`parseZip` 返回 Promise，原实现永远报"缺少 workbook.xml"）
@@ -204,6 +205,8 @@
   - 导出新增「华为格式」（含列宽与表头筛选），导出→重导入往返一致
   - 导出**沿用导入文件的表头与列序**（模板持久化于 `ipviewer.template.v1`）；「子网」列回填目录名
 - [x] **目录分组 = 表格「子网」列**（2026-09-11）：侧栏新建 `ATD`/`ADR` 等目录收纳多个网段，可折叠、显示汇总、删除目录不删网段；导入按「子网」列自动归类、导出回填目录名（两边同一概念，无需人工维护）；schema 升 v2 并带迁移
+- [x] **网段批量删除**（2026-09-11）：侧栏「多选」+ 卡片勾选 + Shift 范围 + 目录头整组全选，确认框写明网段数与记录数
+- [x] **侧栏滚动条常隐 + 内联 SVG 标签图标**（2026-09-11）：滚动条隐藏但滚轮照常；favicon 用 data URI 以符合 CSP（`img-src data:`）
 - [ ] **日期列支持**：向导缺少计划中的「数值列为日期」勾选（Excel 日期序列 → JS 日期，1899-12-30 历元）。当前参考表无日期列，暂不需要
 
 ### 中优先级（功能缺口）
@@ -250,8 +253,10 @@ index.html
    [3] Calc        CIDR 纯函数（无状态，可独立测试）
    [4] Data        load/migrate(v1→v2)/save/backup/restore + settings/colmap/template
    [5] Store       state + ACTIONS + pub-sub（唯一 mutation 入口 Store.act）+ groupedSubnets
-   [6] Render      subnetList(目录分组/折叠) / grid / stats / legend / footer
+   [6] Render      subnetList(目录分组/折叠/多选) / sideBar / grid / stats / legend / footer
    [7] Panel       open/render/collect/save/quickStatus/clear/step + applyDraft/selectedStatus
+   [7b] SideSel    侧栏网段多选（切换/范围/整目录/全选/批量删除，paint 局部刷新）
+   [7c] Batch      格子图内 IP 多选与批量设状态
    [8] Dialog      confirm / promptSubnet（含目录选择器）/ promptGroup
    [9] IO          JSON / CSV / Xlsx.read(异步!)/write(widths) / Wizard（列映射 + 预设格式识别）
    [9a] TABLE_PROFILES 预设表格格式（华为设备 IP 统计表）
@@ -269,6 +274,9 @@ index.html
 - 导入时若映射了 `mask` 列，则「接口IP + 掩码」优先推导网段；掩码缺失按「同设备+同接口」继承，无法判定时报 badMask
 - 导入会在 `Wizard.run` 持久化**模板**（表头+列序），导出沿用它复现格式
 - 目录 `groups[]` 与网段 `groupId` 是多对一归属；删目录只解除归属，不删网段；`Data.migrate` 会清理悬空 `groupId`
+- 侧栏 `SideSel` 与格子图 `Batch` **刻意独立**：前者按 id 选网段（删除），后者选 IP（设状态），共用状态会互相干扰
+- 勾选走 `SideSel.paint()` 局部刷新，**不重建列表**，否则连续点击会因 DOM 重建丢引用并丢滚动位置
+- CSP 为 `img-src data: blob:`，故 favicon 只能内联 data URI，不能引外部 `.ico`
 
 **回归测试方法**：
 ```bash

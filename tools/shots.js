@@ -118,6 +118,19 @@ const j = async (u) => (await fetch(u)).json();
   await sleep(500);
   await shot('06-export-menu');
 
+  // 7. 多选模式（批量删除）
+  await ev(`(function(){
+    var m = document.querySelector('.export-menu'); if (m) m.remove();
+    document.getElementById('side-pick-btn').click();
+    var cards = document.querySelectorAll('.snt-card');
+    cards[0].click();
+    cards[1].click();
+    cards[2].click();
+    return true;
+  })()`);
+  await sleep(500);
+  await shot('07-multi-select');
+
   console.log('输出目录: ' + OUT);
   child.kill();
 })();

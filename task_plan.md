@@ -67,6 +67,22 @@ Implement every remaining TODO item that is not Excel-specific or IPv6, while pr
 - Import assigns by group name but never overrides a subnet that already has a group.
 - Collapse state is persisted per directory; groups default to expanded.
 
+## Sidebar Batch Delete / Scrollbar / Favicon (2026-09-11)
+
+- [complete] Add inline data-URI SVG favicon (CSP allows only `img-src data: blob:`)
+- [complete] Hide sidebar and panel scrollbars while preserving wheel/keyboard scrolling
+- [complete] Add `SideSel` multi-select module and `subnet-delete-many` store action
+- [complete] Add card checkboxes, group select-all, Shift range, and a bottom action bar
+- [complete] Verify with selftest, UI DOM, edge cases, and a real-browser favicon load check
+- [complete] Update README/findings/progress/todo documentation
+
+## Batch Delete Scope Decisions
+
+- Sidebar selection is separate from the grid's IP-level `Batch` selection; only card clicks are intercepted in picking mode.
+- Selection painting is targeted (no full list rebuild) to keep scroll position and focus stable.
+- Shift range selection covers only currently visible (non-collapsed) subnets.
+- Batch delete is destructive and irreversible behind an explicit confirmation that states the subnet and record counts.
+
 ## UI Polish Pass (2026-09-08)
 
 - [complete] Audit all visible surfaces and expanded UI states with Edge screenshots

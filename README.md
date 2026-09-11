@@ -33,6 +33,21 @@
 
 如果导入的文件没有「子网」列，网段会留在「未分组」，你可以在侧栏手工建目录再归类。
 
+### 网段批量删除
+侧栏「多选」进入多选模式，勾选多个网段后一次性删除：
+
+- 点击网段卡片即勾选/取消；**Shift + 点击**按可见顺序范围勾选
+- 目录标题上的复选框可**整目录全选/取消**（部分选中显示为 `–`）
+- 底部操作条显示「已选 N 个网段（M 条登记记录）」，`全选` / `取消` / `删除`
+- 删除前确认框会写明将删除的网段数与登记记录数；**此操作不可撤销**，建议先「导出备份」
+- 删除的若是当前正在查看的网段，会自动切到剩余的第一个网段
+
+> 多选模式只影响侧栏，不会改动格子图里已有的批量选格功能（Ctrl/Shift 多选格子在右侧批量设状态）。
+
+### 界面细节
+- 侧栏与详情面板的滚动条**常隐**（内容用鼠标滚轮或键盘仍可正常滚动），避免窄侧栏被滚动条挤占
+- 浏览器标签页使用内置 SVG 图标（内联 data URI，不加载任何外部文件）
+
 ### IP 详情登记
 点击格子打开右侧面板，可编辑：
 - 状态（点击即保存）
@@ -145,21 +160,23 @@ npx wrangler deploy
 
 ## 自测
 
-在地址栏后加 `?selftest` 打开自检页面（`index.html?selftest`），自动运行 74 条断言覆盖 CIDR 计算、掩码换算、目录分组与迁移、CSV 解析、列映射、华为格式识别、导入/导出模板复现、zip/xlsx 编解码、NetBox IPAM/DCIM/元数据映射、实例隔离、分块和失败报告等核心逻辑。
+在地址栏后加 `?selftest` 打开自检页面（`index.html?selftest`），自动运行 80 条断言覆盖 CIDR 计算、掩码换算、目录分组与迁移、网段多选/批量删除、CSV 解析、列映射、华为格式识别、导入/导出模板复现、zip/xlsx 编解码、NetBox IPAM/DCIM/元数据映射、实例隔离、分块和失败报告等核心逻辑。
 
 `tools/` 下另有可复跑的端到端验证（需本机 Edge；已用真实「华为设备已配置IP统计.xlsx」验证）：
 
 ```bash
 node tools/extract-check.js                      # 提取内联脚本做语法检查
 node tools/cdp-test.js <真实xlsx路径>            # 真实浏览器：读取→识别→导入→导出→往返
-node tools/ui-test.js  <真实xlsx路径>            # DOM 断言：掩码字段、导出菜单、向导映射
-node tools/edge-test.js                         # 边界用例：掩码继承、行序、幂等性
+node tools/ui-test.js  <真实xlsx路径>            # DOM 断言：目录分组/多选批量删除/滚动条/favicon
+node tools/edge-test.js                         # 边界用例：掩码继承、行序、目录归类、幂等性
+node tools/verify-favicon.js                    # 浏览器中确认 favicon 加载为图片且无 CSP 拦截
 python tools/verify_export.py                   # openpyxl 校验导出文件的列宽/筛选/中文
+python tools/verify_favicon.py                  # 静态校验 favicon data URI 是合法 SVG
 ```
 
 ## 技术说明
 
-- 单 HTML 文件（约 180KB），全部 CSS/JS 内联，零外链
+- 单 HTML 文件（约 217KB），全部 CSS/JS 内联，零外链
 - Excel 读写为自研 Mini-XLSX 实现（zip 解压用浏览器原生 `DecompressionStream`，导出用 STORE zip + CRC32），无第三方库
 - 导出支持列宽（`<cols>`）与表头自动筛选（`<autoFilter>`），与参考表一致
 - CSV 自动识别 GBK/UTF-8 编码，导出带 BOM（Excel 双击不乱码）

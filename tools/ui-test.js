@@ -224,6 +224,120 @@ const j = async (u) => (await fetch(u)).json();
   await send('Emulation.clearDeviceMetricsOverride');
   await sleep(400);
 
+  // ---------- 网段批量删除 ----------
+  const pick = await ev(`(function(){
+    var btn = document.getElementById('side-pick-btn');
+    var before = btn.textContent;
+    btn.click();
+    var on = document.getElementById('side-bar').classList.contains('open');
+    var after = btn.textContent;
+    var cards = document.querySelectorAll('.snt-card.picking').length;
+    var boxes = document.querySelectorAll('.snt-card .pick').length;
+    return { before: before, after: after, barOpen: on, cards: cards, boxes: boxes,
+             delDisabled: document.getElementById('side-del').disabled };
+  })()`);
+  check('「多选」按钮进入多选模式', pick.before === '多选' && pick.after === '完成', JSON.stringify(pick));
+  check('多选操作条出现', pick.barOpen === true, JSON.stringify(pick));
+  check('每张卡片显示勾选框', pick.cards === 6 && pick.boxes === 6, JSON.stringify(pick));
+  check('未选时删除按钮禁用', pick.delDisabled === true, JSON.stringify(pick));
+
+  const selCards = await ev(`(function(){
+    var cards = document.querySelectorAll('.snt-card');
+    cards[0].click();
+    cards[1].click();
+    var picked = document.querySelectorAll('.snt-card.picked').length;
+    return { picked: picked, n: document.getElementById('side-n').textContent,
+             delDisabled: document.getElementById('side-del').disabled };
+  })()`);
+  check('点击卡片可勾选', selCards.picked === 2, JSON.stringify(selCards));
+  check('计数与删除按钮状态同步', selCards.n === '2' && selCards.delDisabled === false, JSON.stringify(selCards));
+
+  const pickAll = await ev(`(function(){
+    document.getElementById('side-all').click();
+    var picked = document.querySelectorAll('.snt-card.picked').length;
+    var label = document.getElementById('side-all').textContent;
+    document.getElementById('side-all').click();
+    return { picked: picked, label: label, after: document.querySelectorAll('.snt-card.picked').length };
+  })()`);
+  check('全选勾中全部网段', pickAll.picked === 6, JSON.stringify(pickAll));
+  check('全选后再点可取消全选', pickAll.label === '取消全选' && pickAll.after === 0, JSON.stringify(pickAll));
+
+  const grpPick = await ev(`(function(){
+    // 选中有网段的那个目录头（未分组），而不是空的 ADR
+    var heads = Array.prototype.filter.call(document.querySelectorAll('.grp-head .pick-grp'), function(b){
+      return b.closest('.grp-head').textContent.indexOf('未分组') >= 0;
+    });
+    var box = heads[0];
+    box.click();
+    var picked = document.querySelectorAll('.snt-card.picked').length;
+    var on = box.classList.contains('on');
+    box.click();
+    return { picked: picked, on: on, after: document.querySelectorAll('.snt-card.picked').length };
+  })()`);
+  check('目录头复选框全选该目录网段', grpPick.picked === 6 && grpPick.on === true, JSON.stringify(grpPick));
+  check('目录头再点取消该目录选择', grpPick.after === 0, JSON.stringify(grpPick));
+
+  const batchDel = await ev(`(function(){
+    var cards = document.querySelectorAll('.snt-card');
+    cards[0].click();
+    cards[1].click();
+    var nBefore = Store.state.data.subnets.length;
+    document.getElementById('side-del').click();
+    var d = document.getElementById('confirm');
+    var body = document.getElementById('cf-body').textContent;
+    document.getElementById('cf-foot').querySelector('.btn.primary').click();
+    return { opened: !!body, body: body.slice(0, 60), nBefore: nBefore,
+             nAfter: Store.state.data.subnets.length,
+             barOpen: document.getElementById('side-bar').classList.contains('open'),
+             pickBtn: document.getElementById('side-pick-btn').textContent };
+  })()`);
+  check('批量删除有确认框并说明记录数', /2/.test(batchDel.body) && /网段/.test(batchDel.body), JSON.stringify(batchDel));
+  check('批量删除生效', batchDel.nBefore === 6 && batchDel.nAfter === 4, JSON.stringify(batchDel));
+  check('删除后退出多选模式', batchDel.barOpen === false && batchDel.pickBtn === '多选', JSON.stringify(batchDel));
+
+  // Shit 范围选择
+  const range = await ev(`(function(){
+    document.getElementById('side-pick-btn').click();
+    var cards = document.querySelectorAll('.snt-card');
+    cards[0].click();
+    var ev2 = new MouseEvent('click', { bubbles: true, shiftKey: true });
+    cards[2].dispatchEvent(ev2);
+    var picked = document.querySelectorAll('.snt-card.picked').length;
+    document.getElementById('side-pick-btn').click();   // 退出
+    return { picked: picked };
+  })()`);
+  check('Shift 点击可范围勾选', range.picked === 3, JSON.stringify(range));
+
+  // 滚动条隐藏但可滚轮滚动（把窗口压矮，强制侧栏溢出）
+  await send('Emulation.setDeviceMetricsOverride', { width: 1200, height: 360, deviceScaleFactor: 1, mobile: false });
+  await sleep(500);
+  const scroll = await ev(`(function(){
+    var el = document.getElementById('subnet-list');
+    var cs = getComputedStyle(el);
+    var barW = el.offsetWidth - el.clientWidth;
+    var barH = el.offsetHeight - el.clientHeight;
+    var canScroll = el.scrollHeight > el.clientHeight;
+    el.scrollTop = 400;
+    var moved = el.scrollTop;
+    el.scrollTop = 0;
+    return { scrollbarWidth: cs.scrollbarWidth, barW: barW, barH: barH, canScroll: canScroll, moved: moved };
+  })()`);
+  check('侧栏滚动条已隐藏', scroll.scrollbarWidth === 'none' && scroll.barW === 0 && scroll.barH === 0, JSON.stringify(scroll));
+  check('侧栏内容仍可滚动', scroll.canScroll === true && scroll.moved > 0, JSON.stringify(scroll));
+  await send('Emulation.clearDeviceMetricsOverride');
+  await sleep(400);
+
+  // ---------- favicon（CSP 仅允许 data:，不能是外链）----------
+  const fav = await ev(`(function(){
+    var links = Array.prototype.map.call(document.querySelectorAll('link[rel*="icon"]'), function(l){
+      return { rel: l.getAttribute('rel'), href: (l.getAttribute('href')||'').slice(0, 30),
+               scheme: (l.getAttribute('href')||'').split(':')[0] };
+    });
+    return { links: links };
+  })()`);
+  check('已声明 data URI favicon', fav.links.length >= 1 && fav.links[0].scheme === 'data', JSON.stringify(fav));
+  check('favicon 不含外链（符合 CSP）', fav.links.every((l) => l.scheme === 'data'), JSON.stringify(fav.links));
+
   check('无运行时异常', errors.length === 0, errors.map((e) => JSON.stringify(e)).join('|').slice(0, 300));
 
   console.log('===== UI 断言 =====');

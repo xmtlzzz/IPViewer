@@ -111,11 +111,12 @@
 
 ### Huawei Excel Regression (2026-09-11)
 
-- Browser selftest: `72 / 72` (was 47) including the asynchronous zip assertion; new coverage for mask math, profile detection, template reproduction, directory CRUD/migration, and Huawei row/export shaping.
+- Browser selftest: `80 / 80` (was 47) including the asynchronous zip assertion; new coverage for mask math, profile detection, template reproduction, directory CRUD/migration, batch subnet deletion, and Huawei row/export shaping.
 - `tools/cdp-test.js` — 37/37 against the real workbook: Mini-XLSX read of the shared-string sheet, profile detection, wizard auto-mapping, full import (12 rows → 11 unique IPs across 6 derived subnets, all grouped under ATD), template-driven Huawei export, and an export→re-import round trip.
-- `tools/ui-test.js` — 29/29 DOM assertions: wizard mask target, panel mask field round-trip, export menu, directory grouping (headers, per-group card counts, collapse/expand, create/delete dialogs), and no horizontal overflow at 390px.
+- `tools/ui-test.js` — 47/47 DOM assertions: wizard mask target, panel mask field round-trip, export menu, directory grouping, sidebar multi-select (checkbox painting, group select-all, Shift range, confirm dialog, post-delete mode exit), hidden-but-scrollable sidebar, data-URI favicon, and no horizontal overflow at 390px.
 - `tools/edge-test.js` — 21/21: mask inheritance, row order, non-contiguous masks, idempotent re-import, template column-order reproduction, and directory auto-creation/dedupe/manual-override protection.
 - `tools/verify_export.py` — openpyxl confirms the exported file is `A1:F13` with matching column widths, an `A1:F1` auto-filter, intact Chinese text, an ATD-backfilled 子网 column, no redundant `状态: 已分配`, and restored VRRP rows.
+- `tools/verify_favicon.py` / `tools/verify-favicon.js` — the favicon parses as valid SVG with all shapes inside a 32×32 canvas, and loads as a real 32×32 image in Edge with no CSP refusal logged.
 - Zero `Runtime.exceptionThrown` events across the runs.
 
 ### Bugs Found And Fixed During Excel Work
@@ -148,3 +149,12 @@
 - Import reuses a directory by name and **never re-assigns a subnet that already has a group**, so a manual re-categorisation is not silently undone by the next import.
 - Two selftest fixtures initially stubbed `Store.state` without `ui`/`settings`, and `Store.act` triggers a full `Render.all`; the stub is now a complete state object. This was a test-harness defect, not a product one.
 - The sidebar collapse assertion failed at first because `Store.act` re-renders the whole sidebar, invalidating the element reference held by the test; the state was correct all along. Fixed by re-querying after each interaction.
+
+### Sidebar Batch Delete, Scrollbar, Favicon (2026-09-11)
+
+- Multi-select lives in a separate `SideSel` module rather than reusing grid `Batch`: one selects subnets by id from the sidebar, the other selects IPs inside the active subnet's grid. Sharing state would make "delete" and "set status" ambiguous, so they stay independent and the sidebar mode only intercepts card clicks.
+- Re-rendering the whole sidebar on every checkbox click invalidated DOM references mid-interaction (the UI test caught this: two clicks registered as one). Selection now uses a targeted `SideSel.paint()` that only toggles classes/text, preserving scroll position and focus — mirroring the existing `Batch.paint()` approach.
+- Shift-range selection deliberately uses `SideSel.visibleIds()`, so collapsed directories are excluded — selecting a range should only touch what the user can actually see.
+- Hiding a scrollbar must not disable scrolling: `scrollbar-width:none` plus `::-webkit-scrollbar{width:0}` keeps wheel/keyboard scrolling intact. Verified by forcing a short viewport and asserting both zero scrollbar thickness and a non-zero `scrollTop` after assignment.
+- The favicon must be a `data:` URI because the page CSP is `img-src data: blob:`; an external `.ico` would be blocked. It is verified two ways — a static SVG parse, and loading it through `new Image()` in a real browser while watching `Log.entryAdded` for CSP refusals.
+- An SVG favicon with only a `viewBox` loads at the browser default 150×150 intrinsic size; adding explicit `width`/`height` makes the intrinsic size 32×32 while still scaling to the tab's 16px. The initial "size mismatch" was a real (if harmless) imprecision, not a load failure.

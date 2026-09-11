@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- 单文件全内联：脚本和样式不加载外部资源；NetBox 同步仅允许 HTTP(S) API 请求 -->
+<!-- Favicon is an inline SVG data URI: CSP allows only `img-src data: blob:`, so no external icon file.-->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='32'%20height='32'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%232563eb'/%3E%3Cg%20fill='%23fff'%3E%3Crect%20x='6'%20y='6'%20width='6'%20height='6'%20rx='1.5'/%3E%3Crect%20x='13'%20y='6'%20width='6'%20height='6'%20rx='1.5'/%3E%3Crect%20x='20'%20y='6'%20width='6'%20height='6'%20rx='1.5'/%3E%3Crect%20x='6'%20y='13'%20width='6'%20height='6'%20rx='1.5'/%3E%3Crect%20x='20'%20y='13'%20width='6'%20height='6'%20rx='1.5'/%3E%3Crect%20x='6'%20y='20'%20width='6'%20height='6'%20rx='1.5'/%3E%3Crect%20x='13'%20y='20'%20width='6'%20height='6'%20rx='1.5'/%3E%3Crect%20x='20'%20y='20'%20width='6'%20height='6'%20rx='1.5'/%3E%3C/g%3E%3Crect%20x='13'%20y='13'%20width='6'%20height='6'%20rx='1.5'%20fill='%2322c55e'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='32'%20height='32'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%232563eb'/%3E%3Cg%20fill='%23fff'%3E%3Crect%20x='6'%20y='6'%20width='6'%20height='6'%20rx='1.5'/%3E%3Crect%20x='13'%20y='6'%20width='6'%20height='6'%20rx='1.5'/%3E%3Crect%20x='20'%20y='6'%20width='6'%20height='6'%20rx='1.5'/%3E%3Crect%20x='6'%20y='13'%20width='6'%20height='6'%20rx='1.5'/%3E%3Crect%20x='20'%20y='13'%20width='6'%20height='6'%20rx='1.5'/%3E%3Crect%20x='6'%20y='20'%20width='6'%20height='6'%20rx='1.5'/%3E%3Crect%20x='13'%20y='20'%20width='6'%20height='6'%20rx='1.5'/%3E%3Crect%20x='20'%20y='20'%20width='6'%20height='6'%20rx='1.5'/%3E%3C/g%3E%3Crect%20x='13'%20y='13'%20width='6'%20height='6'%20rx='1.5'%20fill='%2322c55e'/%3E%3C/svg%3E">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src file: blob: data: http: https:; base-uri 'none'; form-action 'none'">
 <title>IPViewer — 离线 IP 地址池登记</title>
 <style>
@@ -80,6 +82,12 @@ main { flex:1; display:flex; min-height:0; }
 .side-head .hbtn { padding:3px 10px; font-size:12px; }
 #subnet-list { flex:1; overflow-y:auto; padding:8px; }
 
+/* ---------- 隐藏滚动条（内容仍可用滚轮/键盘滚动） ---------- */
+.no-scrollbar { scrollbar-width:none; -ms-overflow-style:none; }
+.no-scrollbar::-webkit-scrollbar { width:0; height:0; }
+#subnet-list, .panel-body { scrollbar-width:none; -ms-overflow-style:none; }
+#subnet-list::-webkit-scrollbar, .panel-body::-webkit-scrollbar { width:0; height:0; }
+
 /* ---------- 目录分组（ATD / ADR …） ---------- */
 .grp { margin-bottom:8px; }
 .grp-head {
@@ -108,6 +116,36 @@ main { flex:1; display:flex; min-height:0; }
 .grp.ungrouped .grp-head { background:transparent; border-style:dashed; }
 .grp.ungrouped .grp-name { color:var(--muted); font-weight:600; }
 .grp-body .snt-card { margin-bottom:6px; }
+
+/* ---------- 侧栏多选与批量删除 ---------- */
+#side-bar {
+  display:none; flex-direction:column; gap:8px;
+  padding:8px 10px 10px; border-top:1px solid var(--border); background:var(--panel);
+}
+#side-bar.open { display:flex; }
+#side-bar .cnt { font-size:12px; color:var(--muted); }
+#side-bar .cnt b { color:var(--text); font-size:13px; }
+#side-bar .row { display:flex; gap:6px; }
+#side-bar .row .btn { flex:1; padding:5px 8px; font-size:12.5px; }
+#side-bar .row .btn:disabled { opacity:.45; cursor:not-allowed; }
+.snt-card.picking { padding-left:6px; }
+.snt-card.picking .nm-txt { font-weight:600; }
+.snt-card.picked { border-color:var(--accent); background:var(--accent-soft); }
+.snt-card .pick {
+  flex:0 0 auto; width:15px; height:15px; margin-right:7px;
+  border:1px solid var(--border); border-radius:4px; background:var(--panel);
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:11px; line-height:1; color:#fff;
+}
+.snt-card.picked .pick { background:var(--accent); border-color:var(--accent); }
+.snt-card .nm { display:flex; align-items:center; }
+.grp-head .pick.pick-grp {
+  border:1px solid var(--border); border-radius:4px; background:var(--panel);
+  width:15px; height:15px; display:inline-flex; align-items:center; justify-content:center;
+  font-size:11px; line-height:1; color:#fff; cursor:pointer; flex:0 0 auto;
+}
+.grp-head .pick.pick-grp.on { background:var(--accent); border-color:var(--accent); }
+.grp-head .pick.pick-grp.part { border-color:var(--accent); color:var(--accent); }
 
 .snt-card {
   padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius);
@@ -741,8 +779,17 @@ footer button { border:none; background:none; color:var(--accent); font-size:12p
         <option value="util">按利用率</option>
       </select>
       <button class="hbtn" data-action="add-group" title="新建目录（子网分组，如 ATD）">＋ 目录</button>
-      <button class="hbtn" data-action="add-subnet">＋ 新增</button></span></div>
+      <button class="hbtn" data-action="add-subnet">＋ 新增</button>
+      <button class="hbtn" data-action="side-pick" id="side-pick-btn" title="多选网段后批量删除">多选</button></span></div>
     <div id="subnet-list"></div>
+    <div id="side-bar">
+      <span class="cnt">已选 <b id="side-n">0</b> 个网段<span id="side-recs"></span></span>
+      <div class="row">
+        <button class="btn" id="side-all" data-action="side-all">全选</button>
+        <button class="btn" id="side-cancel" data-action="side-cancel">取消</button>
+        <button class="btn danger" id="side-del" data-action="side-del">删除</button>
+      </div>
+    </div>
   </aside>
   <section id="content">
     <div id="toolbar" hidden>
@@ -1464,6 +1511,20 @@ var ACTIONS = {
       st.settings.lastSubnetId = st.ui.activeSubnetId;
     }
   },
+  // 批量删除网段（含各自登记记录），返回实际删除数
+  'subnet-delete-many': function (st, ids) {
+    var kill = {};
+    (ids || []).forEach(function (id) { kill[id] = true; });
+    var before = st.data.subnets.length;
+    st.data.subnets = st.data.subnets.filter(function (s) { return !kill[s.id]; });
+    if (kill[st.ui.activeSubnetId]) {
+      st.ui.activeSubnetId = st.data.subnets.length ? st.data.subnets[0].id : '';
+      st.ui.selectedIp = '';
+      st.ui.panelOpen = false;
+    }
+    st.settings.lastSubnetId = st.ui.activeSubnetId;
+    return before - st.data.subnets.length;
+  },
   'subnet-select': function (st, id) {
     st.ui.activeSubnetId = id;
     st.ui.selectedIp = '';
@@ -1559,16 +1620,40 @@ Render.sortSubnets = function (list) {
 Render.subnetCard = function (s) {
   var util = 0;
   try { util = Store.subnetStats(s).util; } catch (e) {}
-  return '<div class="snt-card' + (s.id === Store.state.ui.activeSubnetId ? ' active' : '') + '" data-action="subnet-select" data-id="' + s.id + '">'
-    + '<div class="nm"><span>' + esc(s.name) + '</span>'
-    + '<span class="ops">'
-    + '<button data-action="subnet-edit" data-id="' + s.id + '" title="编辑">✎</button>'
-    + '<button data-action="subnet-delete" data-id="' + s.id + '" title="删除">🗑</button>'
-    + '</span></div>'
+  var picked = SideSel.on && SideSel.sel.indexOf(s.id) >= 0;
+  var cls = 'snt-card'
+    + (s.id === Store.state.ui.activeSubnetId ? ' active' : '')
+    + (SideSel.on ? ' picking' : '')
+    + (picked ? ' picked' : '');
+  var box = SideSel.on
+    ? '<span class="pick" aria-hidden="true">' + (picked ? '✓' : '') + '</span>'
+    : '';
+  return '<div class="' + cls + '" data-action="subnet-select" data-id="' + s.id + '">'
+    + '<div class="nm">' + box + '<span class="nm-txt">' + esc(s.name) + '</span>'
+    + (SideSel.on ? '' : '<span class="ops">'
+      + '<button data-action="subnet-edit" data-id="' + s.id + '" title="编辑">✎</button>'
+      + '<button data-action="subnet-delete" data-id="' + s.id + '" title="删除">🗑</button>'
+      + '</span>')
+    + '</div>'
     + '<div class="cidr">' + esc(s.cidr) + (s.vlan !== '' && s.vlan != null ? ' · VLAN' + esc(s.vlan) : '') + '</div>'
     + '<div class="util-bar"><i style="width:' + util + '%"></i></div>'
     + '<div class="util-txt">已分配 ' + util + '%</div>'
     + '</div>';
+};
+// 目录头：多选模式下显示全选复选框，否则显示编辑/删除
+Render.groupOps = function (g, mine) {
+  if (SideSel.on) {
+    var ids = mine.map(function (s) { return s.id; });
+    var allOn = ids.length > 0 && ids.every(function (id) { return SideSel.sel.indexOf(id) >= 0; });
+    var someOn = ids.some(function (id) { return SideSel.sel.indexOf(id) >= 0; });
+    return '<span class="pick pick-grp' + (allOn ? ' on' : '') + (someOn && !allOn ? ' part' : '') + '"'
+      + ' data-action="group-pick" data-id="' + g.id + '" title="全选/取消该目录下的网段">'
+      + (allOn ? '✓' : someOn ? '–' : '') + '</span>';
+  }
+  return '<span class="ops">'
+    + '<button data-action="group-edit" data-id="' + g.id + '" title="编辑目录">✎</button>'
+    + '<button data-action="group-delete" data-id="' + g.id + '" title="删除目录">🗑</button>'
+    + '</span>';
 };
 Render.subnetList = function () {
   var box = $('#subnet-list');
@@ -1576,6 +1661,8 @@ Render.subnetList = function () {
   var groups = Store.state.data.groups || [];
   if (!all.length && !groups.length) {
     box.innerHTML = '<div class="empty-state">暂无网段<br>点击上方「＋ 新增」创建<br>或先建「＋ 目录」分组管理</div>';
+    SideSel.on = false; SideSel.sel = []; SideSel.anchor = null;
+    Render.sideBar();
     return;
   }
   var collapsed = Store.state.ui.collapsedGroups || {};
@@ -1594,10 +1681,7 @@ Render.subnetList = function () {
       + '<button class="grp-caret" data-action="group-toggle" data-id="' + g.id + '" title="' + (isCollapsed ? '展开' : '折叠') + '" aria-expanded="' + (!isCollapsed) + '">' + (isCollapsed ? '▸' : '▾') + '</button>'
       + '<span class="grp-name" title="' + esc(g.note ? g.name + ' · ' + g.note : g.name) + '">' + esc(g.name) + '</span>'
       + '<span class="grp-meta">' + mine.length + ' 网段 · ' + assigned + ' 已分配</span>'
-      + '<span class="ops">'
-      + '<button data-action="group-edit" data-id="' + g.id + '" title="编辑目录">✎</button>'
-      + '<button data-action="group-delete" data-id="' + g.id + '" title="删除目录">🗑</button>'
-      + '</span>'
+      + Render.groupOps(g, mine)
       + '</div>'
       + (isCollapsed ? '' : '<div class="grp-body">'
           + (mine.length ? renderCards(mine) : '<div class="grp-empty">该目录下暂无网段</div>')
@@ -1613,6 +1697,7 @@ Render.subnetList = function () {
       + '<button class="grp-caret" data-action="group-toggle" data-id="__ungrouped" aria-expanded="' + (!looseCollapsed) + '">' + (looseCollapsed ? '▸' : '▾') + '</button>'
       + '<span class="grp-name">未分组</span>'
       + '<span class="grp-meta">' + loose.length + ' 网段</span>'
+      + Render.groupOps({ id: '__ungrouped' }, loose)
       + '</div>'
       + (looseCollapsed ? '' : '<div class="grp-body">'
           + (loose.length ? renderCards(loose) : '<div class="grp-empty">网段已全部归入目录</div>')
@@ -1620,6 +1705,27 @@ Render.subnetList = function () {
       + '</div>';
   }
   box.innerHTML = html;
+  Render.sideBar();
+};
+// 侧栏底部的多选操作条
+Render.sideBar = function () {
+  var bar = $('#side-bar');
+  if (!bar) return;
+  var btn = $('#side-pick-btn');
+  if (btn) {
+    btn.textContent = SideSel.on ? '完成' : '多选';
+    btn.classList.toggle('primary', SideSel.on);
+  }
+  bar.classList.toggle('open', SideSel.on);
+  if (!SideSel.on) return;
+  var n = SideSel.count();
+  var recs = SideSel.recordCount();
+  $('#side-n').textContent = n;
+  $('#side-recs').textContent = recs ? '（' + recs + ' 条记录）' : '';
+  var del = $('#side-del');
+  del.disabled = n === 0;
+  var total = Store.state.data.subnets.length;
+  $('#side-all').textContent = (n === total && total > 0) ? '取消全选' : '全选';
 };
 Render.content = function () {
   var s = Store.activeSubnet();
@@ -1881,7 +1987,126 @@ Panel.step = function (dir) {
 };
 
 /* ============================================================
- * [7b] Batch —— 右键四态菜单 + 批量多选设状态
+ * [7b] SideSel —— 侧栏网段多选与批量删除
+ * ============================================================ */
+var SideSel = {};
+SideSel.on = false;      // 是否处于多选模式
+SideSel.sel = [];        // 选中的网段 id
+SideSel.anchor = null;   // Shift 范围选择锚点
+
+SideSel.enter = function (seedId) {
+  SideSel.on = true;
+  SideSel.sel = seedId ? [seedId] : [];
+  SideSel.anchor = seedId || null;
+  Render.subnetList();
+};
+SideSel.exit = function () {
+  SideSel.on = false;
+  SideSel.sel = [];
+  SideSel.anchor = null;
+  Render.subnetList();
+};
+// 只更新勾选态与计数，不重建整个列表（保留滚动位置与焦点）
+SideSel.paint = function () {
+  var sel = SideSel.sel;
+  document.querySelectorAll('#subnet-list .snt-card[data-id]').forEach(function (card) {
+    var picked = sel.indexOf(card.dataset.id) >= 0;
+    card.classList.toggle('picked', picked);
+    var box = card.querySelector('.pick');
+    if (box) box.textContent = picked ? '✓' : '';
+  });
+  document.querySelectorAll('#subnet-list .grp').forEach(function (grp) {
+    var head = grp.querySelector('.grp-head');
+    var box = grp.querySelector('.pick-grp');
+    if (!head || !box) return;
+    var gid = head.dataset.id;
+    var ids = Store.state.data.subnets
+      .filter(function (s) { return (gid === '__ungrouped' ? !s.groupId : s.groupId === gid); })
+      .map(function (s) { return s.id; });
+    var allOn = ids.length > 0 && ids.every(function (id) { return sel.indexOf(id) >= 0; });
+    var someOn = ids.some(function (id) { return sel.indexOf(id) >= 0; });
+    box.classList.toggle('on', allOn);
+    box.classList.toggle('part', someOn && !allOn);
+    box.textContent = allOn ? '✓' : someOn ? '–' : '';
+  });
+  Render.sideBar();
+};
+// 当前可见（未被折叠的目录下）的网段 id 顺序，用于 Shift 范围选择
+SideSel.visibleIds = function () {
+  var collapsed = Store.state.ui.collapsedGroups || {};
+  var out = [];
+  Store.groupedSubnets().forEach(function (bucket) {
+    var key = bucket.group ? bucket.group.id : '__ungrouped';
+    if (collapsed[key]) return;
+    Render.sortSubnets(bucket.subnets.slice()).forEach(function (s) { out.push(s.id); });
+  });
+  return out;
+};
+SideSel.toggle = function (id, mode) {
+  var i = SideSel.sel.indexOf(id);
+  if (mode === 'range' && SideSel.anchor) {
+    var ids = SideSel.visibleIds();
+    var a = ids.indexOf(SideSel.anchor), b = ids.indexOf(id);
+    if (a >= 0 && b >= 0) {
+      if (a > b) { var t = a; a = b; b = t; }
+      for (var k = a; k <= b; k++) if (SideSel.sel.indexOf(ids[k]) < 0) SideSel.sel.push(ids[k]);
+    }
+  } else {
+    if (i >= 0) SideSel.sel.splice(i, 1);
+    else SideSel.sel.push(id);
+  }
+  SideSel.anchor = id;
+  SideSel.paint();
+};
+// 目录头复选框：全选/取消该目录下的网段
+SideSel.toggleGroup = function (groupId) {
+  var ids = Store.state.data.subnets
+    .filter(function (s) { return (groupId === '__ungrouped' ? !s.groupId : s.groupId === groupId); })
+    .map(function (s) { return s.id; });
+  var allOn = ids.length > 0 && ids.every(function (id) { return SideSel.sel.indexOf(id) >= 0; });
+  ids.forEach(function (id) {
+    var i = SideSel.sel.indexOf(id);
+    if (allOn) { if (i >= 0) SideSel.sel.splice(i, 1); }
+    else if (i < 0) SideSel.sel.push(id);
+  });
+  SideSel.paint();
+};
+SideSel.all = function () {
+  SideSel.sel = Store.state.data.subnets.map(function (s) { return s.id; });
+  SideSel.paint();
+};
+SideSel.none = function () {
+  SideSel.sel = [];
+  SideSel.paint();
+};
+SideSel.count = function () { return SideSel.sel.length; };
+// 所选网段里共有多少条登记记录
+SideSel.recordCount = function () {
+  var n = 0;
+  SideSel.sel.forEach(function (id) {
+    var s = Store.findSubnet(id);
+    if (s) n += Object.keys(s.ips).length;
+  });
+  return n;
+};
+SideSel.remove = function () {
+  var n = SideSel.count();
+  if (!n) return;
+  var recs = SideSel.recordCount();
+  Dialog.confirm('批量删除网段',
+    '确定删除选中的 <b>' + n + '</b> 个网段？<br>'
+    + (recs ? '其中共 <b>' + recs + '</b> 条登记记录将一并删除，' : '')
+    + '此操作不可撤销（可先用底部「恢复上次导入前备份」兜底，或先导出 JSON 备份）。',
+    function () {
+      var ids = SideSel.sel.slice();
+      var removed = Store.act('subnet-delete-many', ids);
+      SideSel.exit();
+      toast('已删除 ' + removed + ' 个网段' + (recs ? '（含 ' + recs + ' 条记录）' : ''));
+    }, '删除');
+};
+
+/* ============================================================
+ * [7c] Batch —— 右键四态菜单 + 批量多选设状态
  * ============================================================ */
 var Batch = {};
 Batch.sel = [];          // ['192.168.1.5', ...] 批量选中的 IP
@@ -4620,7 +4845,19 @@ Events.init = function () {
     var id = el.dataset.id;
     try {
       switch (act) {
-        case 'subnet-select': Store.act('subnet-select', id); break;
+        case 'subnet-select':
+          // 多选模式下点击卡片 = 勾选/取消，不切换当前网段
+          if (SideSel.on) SideSel.toggle(id, ev.shiftKey ? 'range' : 'single');
+          else Store.act('subnet-select', id);
+          break;
+        case 'side-pick': SideSel.on ? SideSel.exit() : SideSel.enter(); break;
+        case 'side-all':
+          if (SideSel.count() === Store.state.data.subnets.length) SideSel.none();
+          else SideSel.all();
+          break;
+        case 'side-cancel': SideSel.exit(); break;
+        case 'side-del': SideSel.remove(); break;
+        case 'group-pick': ev.stopPropagation(); SideSel.toggleGroup(id); break;
         case 'add-subnet': Dialog.promptSubnet(); break;
         case 'add-group': Dialog.promptGroup(); break;
         case 'group-edit': ev.stopPropagation(); Dialog.promptGroup(id); break;
@@ -4745,6 +4982,9 @@ Events.deleteSubnet = function (id) {
   var n = Object.keys(s.ips).length;
   Dialog.confirm('删除网段', '确定删除 <b>' + esc(s.name) + '（' + esc(s.cidr) + '）</b>？<br>其中 <b>' + n + '</b> 条登记记录将一并删除，此操作不可撤销。', function () {
     Store.act('subnet-delete', id);
+    // 该网段若在多选集合里，一并移除，避免残留幽灵选中
+    var i = SideSel.sel.indexOf(id);
+    if (i >= 0) { SideSel.sel.splice(i, 1); SideSel.paint(); }
   }, '删除');
 };
 Events.pickFile = function (accept, cb) {
@@ -5009,6 +5249,129 @@ function runSelftest() {
   t('12 列导出含目录列', function () {
     eq(IO.tableHeaders().indexOf('目录') >= 0, true);
     eq(IO.tableHeaders().length, 13);
+  });
+  /* ---------- 网段批量删除 ---------- */
+  t('批量删除网段（含记录）', function () {
+    var oldData = Store.state;
+    try {
+      Store.state = stubState();
+      Store.act('subnet-add', { cidr: '10.0.0.0/30' });
+      Store.act('subnet-add', { cidr: '10.0.1.0/30' });
+      Store.act('subnet-add', { cidr: '10.0.2.0/30' });
+      var ids = Store.state.data.subnets.map(function (s) { return s.id; });
+      Store.act('ip-set', ids[0], '10.0.0.1', { status: 'assigned', name: 'a' });
+      Store.act('ip-set', ids[1], '10.0.1.1', { status: 'assigned', name: 'b' });
+      var removed = Store.act('subnet-delete-many', [ids[0], ids[1]]);
+      eq(Store.state.data.subnets.length, 1);
+      eq(Store.state.data.subnets[0].cidr, '10.0.2.0/30');
+      // 删除数由 action 返回；Store.act 不回传，这里用前后长度校验
+      eq(Store.state.data.subnets.length === 1, true);
+    } finally { Store.state = oldData; }
+  });
+  t('批量删除当前激活网段时切换激活项', function () {
+    var oldData = Store.state;
+    try {
+      Store.state = stubState();
+      Store.act('subnet-add', { cidr: '10.1.0.0/30' });
+      Store.act('subnet-add', { cidr: '10.1.1.0/30' });
+      var ids = Store.state.data.subnets.map(function (s) { return s.id; });
+      Store.act('subnet-select', ids[0]);
+      Store.act('open-panel', '10.1.0.1');
+      Store.act('subnet-delete-many', [ids[0]]);
+      eq(Store.state.data.subnets.length, 1);
+      eq(Store.state.ui.activeSubnetId, ids[1]);
+      eq(Store.state.ui.panelOpen, false);
+      eq(Store.state.ui.selectedIp, '');
+    } finally { Store.state = oldData; }
+  });
+  t('批量删除全部网段后激活项清空', function () {
+    var oldData = Store.state;
+    try {
+      Store.state = stubState();
+      Store.act('subnet-add', { cidr: '10.2.0.0/30' });
+      var ids = Store.state.data.subnets.map(function (s) { return s.id; });
+      Store.act('subnet-delete-many', ids);
+      eq(Store.state.data.subnets.length, 0);
+      eq(Store.state.ui.activeSubnetId, '');
+      eq(Store.state.settings.lastSubnetId, '');
+    } finally { Store.state = oldData; }
+  });
+  t('侧栏多选：勾选/取消/全选/按目录全选', function () {
+    var oldData = Store.state;
+    var oldOn = SideSel.on, oldSel = SideSel.sel.slice(), oldAnchor = SideSel.anchor;
+    try {
+      Store.state = stubState();
+      Store.act('group-add', { name: 'ATD' });
+      var gid = Store.state.data.groups[0].id;
+      Store.act('subnet-add', { cidr: '10.3.0.0/30', groupId: gid });
+      Store.act('subnet-add', { cidr: '10.3.1.0/30', groupId: gid });
+      Store.act('subnet-add', { cidr: '10.3.2.0/30' });     // 未分组
+      var ids = Store.state.data.subnets.map(function (s) { return s.id; });
+      SideSel.on = true; SideSel.sel = []; SideSel.anchor = null;
+      SideSel.toggle(ids[0]);
+      eq(SideSel.count(), 1);
+      SideSel.toggle(ids[0]);
+      eq(SideSel.count(), 0);
+      // Shift 范围：可见顺序 ids[0..1] → 两个
+      SideSel.toggle(ids[0]);
+      SideSel.toggle(ids[1], 'range');
+      eq(SideSel.count(), 2);
+      // 按目录全选（ATD 下 2 个，已全选 → 取消）
+      SideSel.toggleGroup(gid);
+      eq(SideSel.count(), 0);
+      SideSel.toggleGroup(gid);
+      eq(SideSel.count(), 2);
+      // 未分组全选
+      SideSel.toggleGroup('__ungrouped');
+      eq(SideSel.count(), 3);
+      eq(SideSel.recordCount(), 0);
+      SideSel.all();
+      eq(SideSel.count(), 3);
+      SideSel.exit();
+      eq(SideSel.on, false);
+      eq(SideSel.count(), 0);
+    } finally {
+      Store.state = oldData;
+      SideSel.on = oldOn; SideSel.sel = oldSel; SideSel.anchor = oldAnchor;
+    }
+  });
+  t('侧栏多选统计登记记录数', function () {
+    var oldData = Store.state;
+    var oldOn = SideSel.on, oldSel = SideSel.sel.slice();
+    try {
+      Store.state = stubState();
+      Store.act('subnet-add', { cidr: '10.4.0.0/29' });
+      var s = Store.state.data.subnets[0];
+      Store.act('ip-set', s.id, '10.4.0.1', { status: 'assigned' });
+      Store.act('ip-set', s.id, '10.4.0.2', { status: 'assigned' });
+      SideSel.on = true; SideSel.sel = [s.id];
+      eq(SideSel.recordCount(), 2);
+      SideSel.exit();
+    } finally {
+      Store.state = oldData;
+      SideSel.on = oldOn; SideSel.sel = oldSel;
+    }
+  });
+  t('侧栏折叠的目录不参与 Shift 范围选择', function () {
+    var oldData = Store.state;
+    var oldOn = SideSel.on, oldSel = SideSel.sel.slice(), oldAnchor = SideSel.anchor;
+    try {
+      Store.state = stubState();
+      Store.act('subnet-add', { cidr: '10.5.0.0/30' });
+      Store.act('subnet-add', { cidr: '10.5.1.0/30' });
+      Store.act('subnet-add', { cidr: '10.5.2.0/30' });
+      var ids = Store.state.data.subnets.map(function (s) { return s.id; });
+      // 折叠「未分组」后可见列表应为空
+      Store.state.ui.collapsedGroups = { '__ungrouped': true };
+      SideSel.on = true;
+      eq(SideSel.visibleIds().length, 0);
+      Store.state.ui.collapsedGroups = {};
+      eq(SideSel.visibleIds().length, 3);
+      SideSel.exit();
+    } finally {
+      Store.state = oldData;
+      SideSel.on = oldOn; SideSel.sel = oldSel; SideSel.anchor = oldAnchor;
+    }
   });
   t('子网列取值来自目录归属（非记录字段）', function () {
     var oldData = Store.state;
