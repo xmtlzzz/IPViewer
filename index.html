@@ -76,9 +76,14 @@ main { flex:1; display:flex; min-height:0; }
   border-right:1px solid var(--border); display:flex; flex-direction:column;
 }
 .side-head {
-  display:flex; align-items:center; justify-content:space-between;
-  padding:10px 12px; font-weight:600; border-bottom:1px solid var(--border);
+  padding:10px 12px 6px; font-weight:600;
 }
+.side-tools-row {
+  display:flex; align-items:center; gap:4px;
+  padding:0 10px 10px; border-bottom:1px solid var(--border);
+}
+.side-tools-row > * { flex:1 1 0; min-width:0; }
+.side-tools-row .hbtn { padding:4px 4px; font-size:12px; white-space:nowrap; text-align:center; }
 .side-head .hbtn { padding:3px 10px; font-size:12px; }
 #subnet-list { flex:1; overflow-y:auto; padding:8px; }
 
@@ -680,7 +685,6 @@ dialog::backdrop { background:rgba(15,23,42,.42); }
 .w-date-col { display:inline-flex; align-items:center; gap:6px; font-size:13px; line-height:1.6; }
 .w-date-col input { margin:0; }
 .map-row .w-date-flag { font-size:12px; }
-.side-head-tools { display:flex; align-items:center; gap:4px; }
 .side-sort {
   min-height:30px;
   padding:0 6px;
@@ -855,8 +859,9 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
 
 <main>
   <aside id="sidebar">
-    <div class="side-head">网段列表 <span class="side-head-tools">
-      <select id="subnet-sort" class="side-sort">
+    <div class="side-head">网段列表</div>
+    <div class="side-tools-row">
+      <select id="subnet-sort" class="side-sort" title="网段排序方式">
         <option value="created">默认</option>
         <option value="name">按名称</option>
         <option value="cidr">按网段</option>
@@ -864,7 +869,8 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
       </select>
       <button class="hbtn" data-action="add-group" title="新建目录（子网分组，如 ATD）">＋ 目录</button>
       <button class="hbtn" data-action="add-subnet">＋ 新增</button>
-      <button class="hbtn" data-action="side-pick" id="side-pick-btn" title="多选网段后批量删除">多选</button></span></div>
+      <button class="hbtn" data-action="side-pick" id="side-pick-btn" title="多选网段后批量删除">多选</button>
+    </div>
     <div id="subnet-list"></div>
     <div id="side-bar">
       <span class="cnt">已选 <b id="side-n">0</b> 个网段<span id="side-recs"></span></span>
