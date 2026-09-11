@@ -752,6 +752,12 @@ footer button { border:none; background:none; color:var(--accent); font-size:12p
   body { min-width:0; }
   #content { overflow:visible; }
 }
+/* ---- feat: undo/snap ---- */
+footer button:disabled { color:var(--muted); text-decoration:none; cursor:default; opacity:.55; }
+.snap-list { display:flex; flex-direction:column; gap:8px; min-width:280px; }
+.snap-row { display:flex; align-items:center; gap:10px; }
+.snap-row .snap-time { flex:1; font-family:Consolas,monospace; }
+.snap-row .snap-size { color:var(--muted); font-size:11px; white-space:nowrap; }
 </style>
 </head>
 <body>
@@ -925,6 +931,9 @@ footer button { border:none; background:none; color:var(--accent); font-size:12p
 </div>
 
 <footer>
+  <button type="button" id="ft-undo" title="撤销（Ctrl+Z）" disabled>撤销</button>
+  <button type="button" id="ft-redo" title="重做（Ctrl+Y / Ctrl+Shift+Z）" disabled>重做</button>
+  <button type="button" id="ft-snap" title="历史快照（自动保留最近 5 份）">快照</button>
   <span id="ft-count"></span>
   <span id="ft-size"></span>
   <span id="ft-backup"></span>
@@ -948,7 +957,8 @@ var LS = {
   colmap:   'ipviewer.colmap.v1',
   backup:   'ipviewer.backup.v1',
   keywords: 'ipviewer.keywords.v1',
-  template: 'ipviewer.template.v1'
+  template: 'ipviewer.template.v1',
+  snaps:    'ipviewer.snaps.v1'
 };
 var RENDER_LIMIT = 4096;              // /20 —— 格子图渲染硬上限
 var STATUS_LABEL = {
@@ -1252,6 +1262,7 @@ Data.backupCurrent = function () {
   try {
     var raw = localStorage.getItem(LS.data);
     if (raw) localStorage.setItem(LS.backup, raw);
+    Data.pushSnapshot(raw);             // 同时追加一份多级时间戳快照（见 [5b]，失败静默）
     return true;
   } catch (e) { return false; }
 };
@@ -1987,6 +1998,144 @@ Panel.step = function (dir) {
   } while (!Store.state.settings.showNetBc && Calc.roleOf(idx, info.total, info.pre) !== 'host');
   Panel.open(next);
 };
+
+/* ============================================================
+ * [5b] Undo/Snap —— 撤销重做与多级快照
+ * ============================================================ */
+// 撤销历史只存内存（刷新即清空，属设计决策）；多级快照持久化于 LS.snaps
+var Undo = { undoStack: [], redoStack: [], MAX: 30 };
+// UI-only action 不入撤销历史（只改视图状态，不动 data）
+var NO_UNDO = {
+  'subnet-select': 1, 'select-ip': 1, 'open-panel': 1, 'close-panel': 1,
+  'set-filter': 1, 'set-search': 1, 'set-density': 1, 'set-font': 1,
+  'toggle-theme': 1, 'group-toggle': 1
+};
+// 包装唯一 mutation 入口：执行可撤销 action 前快照当前 data（新动作分叉 → 清空重做栈）
+var _undoOrigAct = Store.act;
+Store.act = function (name) {
+  if (ACTIONS[name] && !NO_UNDO[name]) Undo.push(JSON.stringify(this.state.data));
+  return _undoOrigAct.apply(this, arguments);
+};
+Undo.push = function (snap) {
+  Undo.undoStack.push(snap);
+  if (Undo.undoStack.length > Undo.MAX) Undo.undoStack.shift();
+  Undo.redoStack.length = 0;
+};
+// 恢复快照进 state；sink = 当前数据去向（undo 时进 redoStack，redo 时进 undoStack）
+Undo.apply = function (snap, sink) {
+  var d = Data._safeParse(snap);
+  if (!d) return false;
+  sink.push(JSON.stringify(Store.state.data));
+  if (sink.length > Undo.MAX) sink.shift();
+  Store.state.data = Data.migrate(d);
+  // 校正悬空的当前网段（如撤销 subnet-add / subnet-delete 之后）
+  if (Store.state.ui && Store.state.ui.activeSubnetId && !Store.findSubnet(Store.state.ui.activeSubnetId)) {
+    Store.state.ui.activeSubnetId = '';
+    Store.state.ui.selectedIp = '';
+    Store.state.ui.panelOpen = false;
+  }
+  if (Store.state.ui && Store.state.settings) Store.state.settings.lastSubnetId = Store.state.ui.activeSubnetId;
+  Store.persist();                       // selftest 抑制期间自动跳过落盘，历史照常工作
+  Store.emit();
+  return true;
+};
+Store.canUndo = function () { return Undo.undoStack.length > 0; };
+Store.canRedo = function () { return Undo.redoStack.length > 0; };
+Store.undo = function () {
+  if (!Undo.undoStack.length) return false;
+  return Undo.apply(Undo.undoStack.pop(), Undo.redoStack);
+};
+Store.redo = function () {
+  if (!Undo.redoStack.length) return false;
+  return Undo.apply(Undo.redoStack.pop(), Undo.undoStack);
+};
+
+/* ---- 多级时间戳快照（持久化 LS.snaps，上限 5 份 FIFO，写入失败静默） ---- */
+var SNAP_MAX = 5;
+Data.pushSnapshot = function (raw) {
+  if (!raw) return;
+  try {
+    var arr = Data._safeParse(localStorage.getItem(LS.snaps));
+    if (!Array.isArray(arr)) arr = [];
+    arr.push({ ts: nowIso(), data: raw });
+    while (arr.length > SNAP_MAX) arr.shift();
+    localStorage.setItem(LS.snaps, JSON.stringify(arr));
+  } catch (e) { /* 配额满等写入失败不影响主流程 */ }
+};
+// 只返回元数据，不暴露 data 本体（防大对象泄漏到 UI）
+Data.listSnaps = function () {
+  var arr = null;
+  try { arr = Data._safeParse(localStorage.getItem(LS.snaps)); } catch (e) {}
+  if (!Array.isArray(arr)) return [];
+  return arr.map(function (s) {
+    return { ts: s ? s.ts : '', chars: s && typeof s.data === 'string' ? s.data.length : 0 };
+  });
+};
+Data.restoreSnapshot = function (i) {
+  var arr = null;
+  try { arr = Data._safeParse(localStorage.getItem(LS.snaps)); } catch (e) {}
+  var s = Array.isArray(arr) ? arr[i] : null;
+  var d = s ? Data._safeParse(s.data) : null;
+  if (!d) { toast('快照不存在或已损坏', { err: true }); return false; }
+  Data.backupCurrent();                // 恢复前照常备份当前数据（同时留存一份快照）
+  Store.state.data = Data.migrate(d);
+  Store.persist();
+  Store.emit();
+  toast('已恢复快照 ' + fmtTime(s.ts));
+  return true;
+};
+
+/* ---- footer 按钮 / 快照对话框 / 快捷键 ---- */
+Undo.syncButtons = function () {
+  var u = document.getElementById('ft-undo'), r = document.getElementById('ft-redo');
+  if (u) u.disabled = !Store.canUndo();
+  if (r) r.disabled = !Store.canRedo();
+};
+Undo.openDialog = function () {
+  var snaps = Data.listSnaps();
+  if (!snaps.length) { toast('暂无快照。导入 / 恢复备份 / 恢复快照等覆盖数据的操作会自动留存最近 ' + SNAP_MAX + ' 份'); return; }
+  var rows = [];
+  for (var i = snaps.length - 1; i >= 0; i--) {   // 新的在上，data-snap-i 保持真实下标
+    rows.push('<div class="snap-row">'
+      + '<span class="snap-time">' + esc(fmtTime(snaps[i].ts)) + '</span>'
+      + '<span class="snap-size">' + esc(fmtBytes(snaps[i].chars)) + '</span>'
+      + '<button type="button" class="btn" data-snap-i="' + i + '">恢复</button>'
+      + '</div>');
+  }
+  Dialog.confirm('历史快照（最近 ' + snaps.length + ' / ' + SNAP_MAX + ' 份）',
+    '<div class="snap-list">' + rows.join('') + '</div>',
+    null, '关闭');
+};
+(function initUndoUI() {
+  var fu = document.getElementById('ft-undo');
+  var fr = document.getElementById('ft-redo');
+  var fsnap = document.getElementById('ft-snap');
+  if (fu) fu.addEventListener('click', function () { Store.undo(); });
+  if (fr) fr.addEventListener('click', function () { Store.redo(); });
+  if (fsnap) fsnap.addEventListener('click', Undo.openDialog);
+  // 快照对话框内的「恢复」按钮：Dialog.confirm 的 body 是 innerHTML 注入，走事件委托
+  var cfBody = document.getElementById('cf-body');
+  if (cfBody) cfBody.addEventListener('click', function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('[data-snap-i]') : null;
+    if (!btn) return;
+    var dlg = document.getElementById('confirm');
+    if (dlg.open) dlg.close();
+    Data.restoreSnapshot(+btn.getAttribute('data-snap-i'));
+  });
+  // 快捷键：Ctrl+Z 撤销 / Ctrl+Y 或 Ctrl+Shift+Z 重做；输入控件内不拦截（走浏览器原生撤销）
+  document.addEventListener('keydown', function (ev) {
+    if (!(ev.ctrlKey || ev.metaKey)) return;
+    var k = String(ev.key || '').toLowerCase();
+    var isUndo = k === 'z' && !ev.shiftKey;
+    var isRedo = k === 'y' || (k === 'z' && ev.shiftKey);
+    if (!isUndo && !isRedo) return;
+    var tg = ev.target;
+    if (tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA' || tg.tagName === 'SELECT' || tg.isContentEditable)) return;
+    ev.preventDefault();
+    if (isUndo) Store.undo(); else Store.redo();   // persist + emit 在 undo/redo 内完成
+  });
+  Store.sub(Undo.syncButtons);   // 随每次 emit 同步按钮可用态
+})();
 
 /* ============================================================
  * [7b] SideSel —— 侧栏网段多选与批量删除
@@ -5813,6 +5962,93 @@ function runSelftest() {
     } finally {
       Store.state = oldData;
       Object.keys(oldConfig).forEach(function (key) { NetBox.state[key] = oldConfig[key]; });
+    }
+  });
+
+  /* ---------- [5b] Undo/Snap（历史只在内存；persist 被抑制，依赖落盘的断言直接操作 LS） ---------- */
+  t('Undo/Redo：subnet-add 撤销与重做', function () {
+    Undo.undoStack.length = 0; Undo.redoStack.length = 0;   // 清掉此前桩用例压入的历史
+    var prevActive = Store.state.ui.activeSubnetId;
+    var before = Store.state.data.subnets.length;
+    var cidr = '';
+    ['198.51.100.0/24', '203.0.113.0/24', '10.233.0.0/24'].some(function (c) {
+      if (!Store.state.data.subnets.some(function (s) { return s.cidr === c; })) { cidr = c; return true; }
+      return false;
+    });
+    Store.act('subnet-add', { cidr: cidr, name: '自测撤销网段' });
+    eq(Store.state.data.subnets.length, before + 1, '新增后网段数');
+    eq(Store.canUndo(), true, '应可撤销');
+    eq(Store.canRedo(), false, '新动作应清空重做栈');
+    Store.undo();
+    eq(Store.state.data.subnets.length, before, '撤销后网段数还原');
+    eq(Store.canRedo(), true, '应可重做');
+    Store.redo();
+    eq(Store.state.data.subnets.length, before + 1, '重做后网段数恢复');
+    Store.undo();                       // 收尾：把测试网段再撤销掉
+    Undo.undoStack.length = 0; Undo.redoStack.length = 0;
+    Store.state.ui.activeSubnetId = prevActive;
+    Store.state.settings.lastSubnetId = prevActive;
+  });
+  t('Undo：UI-only action 不入历史且栈上限 30', function () {
+    Undo.undoStack.length = 0; Undo.redoStack.length = 0;
+    Store.act('set-filter', '');
+    Store.act('set-search', '');
+    eq(Undo.undoStack.length, 0, 'UI-only action 不应压入撤销栈');
+    for (var i = 0; i < Undo.MAX + 3; i++) Undo.push('{"n":' + i + '}');
+    eq(Undo.undoStack.length, Undo.MAX, '栈上限 30');
+    eq(Undo.undoStack[0], '{"n":3}', '超出上限丢弃最旧');
+    eq(Undo.redoStack.length, 0, '新动作清空重做栈');
+    Undo.undoStack.length = 0; Undo.redoStack.length = 0;
+  });
+  t('Snap：push/list 元数据与 FIFO 上限', function () {
+    var saved = null;
+    try { saved = localStorage.getItem(LS.snaps); } catch (e) {}
+    try {
+      try { localStorage.removeItem(LS.snaps); } catch (e) {}
+      var rawA = '{"schemaVersion":2,"subnets":[],"groups":[]}';
+      var rawB = '{"schemaVersion":2,"subnets":[{"id":"a","cidr":"10.1.0.0/24","name":"A","ips":{}}],"groups":[]}';
+      Data.pushSnapshot(rawA);
+      Data.pushSnapshot(rawB);
+      var list = Data.listSnaps();
+      eq(list.length, 2, '应有两份快照');
+      eq(typeof list[0].ts, 'string', 'ts 为字符串');
+      eq(list[0].data, undefined, 'list 不暴露 data 本体');
+      eq(list[1].chars, rawB.length, 'chars 为快照长度');
+      for (var i = 0; i < 7; i++) Data.pushSnapshot('{"i":' + i + '}');
+      var arr = Data._safeParse(localStorage.getItem(LS.snaps));
+      eq(arr.length, SNAP_MAX, '快照上限 5 份');
+      eq(arr[0].data, '{"i":2}', 'FIFO 淘汰最旧');
+    } finally {
+      try {
+        if (saved === null) localStorage.removeItem(LS.snaps);
+        else localStorage.setItem(LS.snaps, saved);
+      } catch (e) {}
+    }
+  });
+  t('Snap：restoreSnapshot 走 migrate+persist+emit', function () {
+    var savedSnaps = null, savedData = null;
+    try { savedSnaps = localStorage.getItem(LS.snaps); } catch (e) {}
+    try { savedData = localStorage.getItem(LS.data); } catch (e) {}
+    var oldState = Store.state, oldData = Store.state.data;
+    try {
+      try { localStorage.removeItem(LS.snaps); } catch (e) {}
+      // 暂移主数据，避免 restoreSnapshot 内的 backupCurrent 触碰真实备份槽
+      if (savedData !== null) { try { localStorage.removeItem(LS.data); } catch (e) {} }
+      Data.pushSnapshot('{"schemaVersion":2,"subnets":[{"id":"snap1","cidr":"10.9.0.0/24","name":"快照网段","ips":{}}],"groups":[]}');
+      Store.state.data = Data.fresh();
+      eq(Data.restoreSnapshot(0), true, '恢复成功');
+      eq(Store.state.data.subnets.length, 1, '恢复出 1 个网段');
+      eq(Store.state.data.subnets[0].cidr, '10.9.0.0/24', '网段内容一致');
+      eq(Store.state.data.schemaVersion, SCHEMA_VERSION, '经过 migrate');
+    } finally {
+      try {
+        if (savedSnaps === null) localStorage.removeItem(LS.snaps);
+        else localStorage.setItem(LS.snaps, savedSnaps);
+        if (savedData === null) localStorage.removeItem(LS.data);
+        else localStorage.setItem(LS.data, savedData);
+      } catch (e) {}
+      Store.state = oldState;
+      Store.state.data = oldData;
     }
   });
 
