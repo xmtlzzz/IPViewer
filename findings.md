@@ -111,10 +111,11 @@
 
 ### Huawei Excel Regression (2026-09-11)
 
-- Browser selftest: `67 / 67` (was 47) including the asynchronous zip assertion; new coverage for mask math, profile detection, template reproduction, and Huawei row/export shaping.
-- `tools/cdp-test.js` — 34/34 against the real workbook: Mini-XLSX read of the shared-string sheet, profile detection, wizard auto-mapping, full import (12 rows → 11 unique IPs across 6 derived subnets), template-driven Huawei export, and an export→re-import round trip.
-- `tools/ui-test.js` — 15/15 DOM assertions: the wizard mask target is populated, the panel mask field renders and round-trips through save, invalid masks warn without blocking, and the export menu exposes both Huawei options.
-- `tools/verify_export.py` — openpyxl confirms the exported file is `A1:F13` with matching column widths, an `A1:F1` auto-filter, intact Chinese text, an all-empty 子网 column, no redundant `状态: 已分配`, and restored VRRP rows.
+- Browser selftest: `72 / 72` (was 47) including the asynchronous zip assertion; new coverage for mask math, profile detection, template reproduction, directory CRUD/migration, and Huawei row/export shaping.
+- `tools/cdp-test.js` — 37/37 against the real workbook: Mini-XLSX read of the shared-string sheet, profile detection, wizard auto-mapping, full import (12 rows → 11 unique IPs across 6 derived subnets, all grouped under ATD), template-driven Huawei export, and an export→re-import round trip.
+- `tools/ui-test.js` — 29/29 DOM assertions: wizard mask target, panel mask field round-trip, export menu, directory grouping (headers, per-group card counts, collapse/expand, create/delete dialogs), and no horizontal overflow at 390px.
+- `tools/edge-test.js` — 21/21: mask inheritance, row order, non-contiguous masks, idempotent re-import, template column-order reproduction, and directory auto-creation/dedupe/manual-override protection.
+- `tools/verify_export.py` — openpyxl confirms the exported file is `A1:F13` with matching column widths, an `A1:F1` auto-filter, intact Chinese text, an ATD-backfilled 子网 column, no redundant `状态: 已分配`, and restored VRRP rows.
 - Zero `Runtime.exceptionThrown` events across the runs.
 
 ### Bugs Found And Fixed During Excel Work
@@ -136,3 +137,14 @@
 - Import stores a template (`ipviewer.template.v1`: headers + mapping + source sheet) at `Wizard.run`, covering both the preset and manual mapping paths. Export reads it to reproduce the imported header order.
 - `assigned` is the implicit default; writing `状态: 已分配` into 备注 was redundant and is now suppressed. This was caught by inspecting the openpyxl dump after the template change, not by an assertion.
 - The Huawei export gained an indirection (`IO.huaweiView()` / `IO.huaweiTemplateRow`) so the fixed 6-column shape and the template-driven shape share one row builder and one note-summarising rule.
+
+### Directory Grouping (2026-09-11)
+
+- The 子网 label turned out to be the same concept as a grouping directory, so the two were unified: a directory (`groups[]`) is a first-class entity and subnets reference it by `groupId`.
+- Earlier the 子网 column was exported empty as a human-maintained field. That was superseded: the user confirmed a directory *is* the 子网 column concept ("新建了一个文件夹实际上就是表格内子网的概念"), so the tool owns the value end to end — import builds the directory, export writes it back, and no manual Excel maintenance is needed. The column is only empty when the subnet is ungrouped.
+- The `IO.HUMAN_COLUMNS` constant was renamed to `IO.GROUP_COLUMNS` because it no longer describes a human-owned column; it marks columns derived from the subnet's directory rather than from a record field, which also keeps `subnet` out of the note-spill list.
+- Schema bumped to v2 with a `1 → 2` migration that adds `groups`/`groupId` and clears dangling `groupId` references to deleted directories.
+- Deleting a directory nulls its subnets' `groupId` instead of deleting subnets — the destructive-action rule in `PRODUCT.md` (explicit, reversible where possible) already required this.
+- Import reuses a directory by name and **never re-assigns a subnet that already has a group**, so a manual re-categorisation is not silently undone by the next import.
+- Two selftest fixtures initially stubbed `Store.state` without `ui`/`settings`, and `Store.act` triggers a full `Render.all`; the stub is now a complete state object. This was a test-harness defect, not a product one.
+- The sidebar collapse assertion failed at first because `Store.act` re-renders the whole sidebar, invalidating the element reference held by the test; the state was correct all along. Fixed by re-querying after each interaction.

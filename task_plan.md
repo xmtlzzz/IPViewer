@@ -50,6 +50,23 @@ Implement every remaining TODO item that is not Excel-specific or IPv6, while pr
 - Date-column support remains deferred; the reference workbook has no date column.
 - The single-file, dependency-free architecture is unchanged (`tools/` scripts are development-only and never loaded by `index.html`).
 
+## Directory Grouping (2026-09-11)
+
+- [complete] Add first-class `groups[]` entity with schema v2 migration and dangling-reference cleanup
+- [complete] Add group CRUD + subnet assignment actions to the Store layer with persistence
+- [complete] Render a collapsible grouped sidebar with per-group counts and an 未分组 section
+- [complete] Add group create/edit/delete dialogs and a directory selector in the subnet dialog
+- [complete] Auto-create and assign directories from the imported 子网 column, protecting manual overrides
+- [complete] Backfill the directory name into the 子网 export column and add a 目录 column to the default export
+- [complete] Extend selftest, integration, UI (incl. 390px), and edge-case suites; update docs
+
+## Grouping Scope Decisions
+
+- A directory is an entity (id/name/note), not a text label on the subnet, so it can be renamed, sorted, and exist while empty — and it maps onto the NetBox Site concept later.
+- Deleting a directory never deletes subnets; they return to 未分组.
+- Import assigns by group name but never overrides a subnet that already has a group.
+- Collapse state is persisted per directory; groups default to expanded.
+
 ## UI Polish Pass (2026-09-08)
 
 - [complete] Audit all visible surfaces and expanded UI states with Edge screenshots

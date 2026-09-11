@@ -38,8 +38,9 @@ const j = async (u) => (await fetch(u)).json();
   const check = (n, ok, d) => out.push([n, !!ok, d || '']);
 
   // 通用：把指定 6 列行数组跑完整个导入流程
-  const runImport = `async function(rows){
-    Store.state.data.subnets = [];
+  const runImport = `async function(rows, keepGroups, keepSubnets){
+    if (!keepSubnets) Store.state.data.subnets = [];
+    if (!keepGroups) Store.state.data.groups = [];
     Wizard.start([{ name: 't', rows: rows }]);
     var cf = document.getElementById('confirm');
     if (cf.open) cf.querySelector('#cf-foot .btn.primary').click();
@@ -154,8 +155,49 @@ const j = async (u) => (await fetch(u)).json();
   })()`);
   check('导入后记住模板表头', tpl.saved && JSON.stringify(tpl.saved) === JSON.stringify(['掩码','接口IP','子网','备注','接口名称','设备名称']), JSON.stringify(tpl.saved));
   check('导出复现导入列序', JSON.stringify(tpl.headers) === JSON.stringify(['掩码','接口IP','子网','备注','接口名称','设备名称']), JSON.stringify(tpl.headers));
-  check('乱序列序下各字段仍落在正确列', tpl.first[0] === '24' && tpl.first[1] === '10.8.8.8' &&
-    tpl.first[2] === '' && tpl.first[3] === '备注X' && tpl.first[4] === 'Gi0/1' && tpl.first[5] === 'dev1', JSON.stringify(tpl.first));
+  check('乱序列序下各字段仍落在正确列（子网列回填目录名）', tpl.first[0] === '24' && tpl.first[1] === '10.8.8.8' &&
+    tpl.first[2] === 'ATD' && tpl.first[3] === '备注X' && tpl.first[4] === 'Gi0/1' && tpl.first[5] === 'dev1', JSON.stringify(tpl.first));
+
+  // I2. 「子网」列 → 目录：自动建目录、网段归类、导出回填
+  const grpImport = await ev(`(async function(){
+    var H = ['子网','接口IP','掩码','设备名称'];
+    await window.__runImport([H, ['ATD','10.10.0.1','24','d1'], ['ATD','10.10.1.1','24','d2'], ['ADR','10.11.0.1','24','d3']]);
+    var d = Store.state.data;
+    var byName = {};
+    d.groups.forEach(function(g){ byName[g.name] = g.id; });
+    return {
+      groups: d.groups.map(function(g){ return g.name; }),
+      atdCount: d.subnets.filter(function(s){ return s.groupId === byName['ATD']; }).length,
+      adrCount: d.subnets.filter(function(s){ return s.groupId === byName['ADR']; }).length,
+      subnets: d.subnets.length
+    };
+  })()`);
+  check('子网列自动建出 ATD / ADR 两个目录', JSON.stringify(grpImport.groups) === JSON.stringify(['ATD', 'ADR']), JSON.stringify(grpImport));
+  check('网段按子网列正确归类', grpImport.atdCount === 2 && grpImport.adrCount === 1 && grpImport.subnets === 3, JSON.stringify(grpImport));
+
+  // I3. 同名目录不重复创建（清空目录后同一批内出现多次 ATD 只建一个）
+  const dedupe = await ev(`(async function(){
+    var H = ['子网','接口IP','掩码'];
+    await window.__runImport([H, ['ATD','10.12.0.1','24'], ['ATD','10.12.0.2','24'], ['ATD','10.12.0.3','24']]);
+    return { groups: Store.state.data.groups.map(function(g){ return g.name; }) };
+  })()`);
+  check('同名目录不重复创建', JSON.stringify(dedupe.groups) === JSON.stringify(['ATD']), JSON.stringify(dedupe));
+
+  // I4. 网段已在目录中时，导入不会把它改到别的目录（保护手工归类）
+  const keepManual = await ev(`(async function(){
+    var H = ['子网','接口IP','掩码'];
+    await window.__runImport([H, ['ATD','10.13.0.1','24']]);
+    Store.act('group-add', { name: 'ADR' });
+    var adr = Store.state.data.groups.filter(function(g){ return g.name === 'ADR'; })[0];
+    var s = Store.state.data.subnets.filter(function(x){ return x.cidr === '10.13.0.0/24'; })[0];
+    Store.act('subnet-assign-group', s.id, adr.id);       // 手工改到 ADR
+    await window.__runImport([H, ['ATD','10.13.0.1','24']], true, true);   // 不重建任何数据
+    var again = Store.state.data.subnets.filter(function(x){ return x.cidr === '10.13.0.0/24'; })[0];
+    var names = {};
+    Store.state.data.groups.forEach(function(g){ names[g.id] = g.name; });
+    return { groupName: names[again.groupId] || '' };
+  })()`);
+  check('手工改过的归类不被导入冲回', keepManual.groupName === 'ADR', JSON.stringify(keepManual));
 
   // J. 自定义模板缺少的字段应并入备注列，不丢信息
   const spill = await ev(`(async function(){

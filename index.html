@@ -79,6 +79,36 @@ main { flex:1; display:flex; min-height:0; }
 }
 .side-head .hbtn { padding:3px 10px; font-size:12px; }
 #subnet-list { flex:1; overflow-y:auto; padding:8px; }
+
+/* ---------- 目录分组（ATD / ADR …） ---------- */
+.grp { margin-bottom:8px; }
+.grp-head {
+  display:flex; align-items:center; gap:6px;
+  padding:6px 8px; border-radius:var(--control-radius);
+  background:var(--panel2); border:1px solid var(--border);
+  cursor:pointer; user-select:none;
+}
+.grp-head:hover { border-color:var(--accent); }
+.grp-head .grp-caret {
+  border:none; background:none; color:var(--muted); padding:0 2px;
+  font-size:11px; line-height:1; cursor:pointer; width:14px;
+}
+.grp-head .grp-name {
+  font-weight:600; font-size:12.5px; flex:1;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.grp-head .grp-meta { font-size:11px; color:var(--muted); white-space:nowrap; }
+.grp-head .ops { display:none; gap:2px; }
+.grp-head:hover .ops { display:inline-flex; }
+.grp-head .ops button { border:none; background:none; color:var(--muted); padding:0 3px; font-size:12px; }
+.grp-head .ops button:hover { color:var(--accent); }
+.grp-body { padding:6px 0 0 10px; border-left:2px solid var(--border); margin-left:6px; }
+.grp.collapsed .grp-body { display:none; }
+.grp-empty { font-size:11.5px; color:var(--muted); padding:4px 2px 6px; }
+.grp.ungrouped .grp-head { background:transparent; border-style:dashed; }
+.grp.ungrouped .grp-name { color:var(--muted); font-weight:600; }
+.grp-body .snt-card { margin-bottom:6px; }
+
 .snt-card {
   padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius);
   margin-bottom:6px; cursor:pointer; background:var(--panel2); position:relative;
@@ -710,6 +740,7 @@ footer button { border:none; background:none; color:var(--accent); font-size:12p
         <option value="cidr">按网段</option>
         <option value="util">按利用率</option>
       </select>
+      <button class="hbtn" data-action="add-group" title="新建目录（子网分组，如 ATD）">＋ 目录</button>
       <button class="hbtn" data-action="add-subnet">＋ 新增</button></span></div>
     <div id="subnet-list"></div>
   </aside>
@@ -862,7 +893,7 @@ footer button { border:none; background:none; color:var(--accent); font-size:12p
 /* ============================================================
  * [1] 常量与配置
  * ============================================================ */
-var SCHEMA_VERSION = 1;
+var SCHEMA_VERSION = 2;
 var APP = 'IPViewer';
 var LS = {
   data:     'ipviewer.data.v1',
@@ -883,7 +914,7 @@ var DEVTYPE_LABEL = {
   ap: '无线 AP', camera: '摄像头', printer: '打印机', pc: '终端 PC', other: '其他'
 };
 var FIELDS = ['name', 'hostname', 'mgmtIp', 'iface', 'mac', 'purpose', 'deviceType', 'note'];
-// 「子网」列语义：参考表中的短标签（如 ATD），工具无法推导，仅原样保留供人工维护
+// 「子网」列 = 目录（网段分组）：导入时按该列建目录并归类，导出时回填目录名
 var TEMPLATE_FIELDS = ['name', 'hostname', 'mgmtIp', 'iface', 'mask', 'mac', 'purpose', 'deviceType', 'note', 'status', 'subnet'];
 var IMPORT_TARGETS = [
   ['ip',       'IP 地址 *'],
@@ -1099,7 +1130,15 @@ Data._safeParse = function (s) {
 };
 Data.migrate = function (data) {
   // 迁移链：v0/v1 → 当前。未来版本在 MIGRATIONS 中追加
-  var MIGRATIONS = { /* 1: function v1toV2(d){...} */ };
+  var MIGRATIONS = {
+    // v1 → v2：引入「目录」(groups)；网段用 groupId 归属，空的字符串表示未分组
+    1: function v1toV2(d) {
+      if (!Array.isArray(d.groups)) d.groups = [];
+      (d.subnets || []).forEach(function (s) {
+        if (typeof s.groupId !== 'string') s.groupId = '';
+      });
+    }
+  };
   if (!data || typeof data !== 'object') return Data.fresh();
   if (!data.schemaVersion) data.schemaVersion = 1;
   for (var v = data.schemaVersion; v < SCHEMA_VERSION; v++) {
@@ -1107,14 +1146,26 @@ Data.migrate = function (data) {
   }
   data.schemaVersion = SCHEMA_VERSION;
   if (!Array.isArray(data.subnets)) data.subnets = [];
+  if (!Array.isArray(data.groups)) data.groups = [];
   data.subnets.forEach(function (s) {
     if (!s.id) s.id = uid('snt');
     if (!s.ips || typeof s.ips !== 'object') s.ips = {};
+    if (typeof s.groupId !== 'string') s.groupId = '';
+  });
+  // 清理指向已删目录的悬空归属
+  var ids = {};
+  data.groups.forEach(function (g) {
+    if (!g.id) g.id = uid('grp');
+    if (typeof g.name !== 'string') g.name = '';
+    ids[g.id] = true;
+  });
+  data.subnets.forEach(function (s) {
+    if (s.groupId && !ids[s.groupId]) s.groupId = '';
   });
   return data;
 };
 Data.fresh = function () {
-  return { schemaVersion: SCHEMA_VERSION, app: APP, updatedAt: nowIso(), subnets: [] };
+  return { schemaVersion: SCHEMA_VERSION, app: APP, updatedAt: nowIso(), groups: [], subnets: [] };
 };
 Data.load = function () {
   var raw = null;
@@ -1179,7 +1230,8 @@ Data.loadSettings = function () {
     lastSubnetId: '',
     showNetBc: true,
     panelDirtyTip: true,
-    subnetSort: 'created' // created | name | cidr | util
+    subnetSort: 'created', // created | name | cidr | util
+    collapsedGroups: {}    // { groupId: true } 折叠的目录
   }, s || {});
 };
 Data.saveSettings = function () {
@@ -1247,7 +1299,8 @@ var Store = {
         selectedIp: '',
         panelOpen: false,
         search: '',
-        statusFilter: ''     // '' = 全部
+        statusFilter: '',    // '' = 全部
+        collapsedGroups: Data.loadSettings().collapsedGroups || {}
       }
     };
     // 校正 lastSubnetId
@@ -1277,6 +1330,27 @@ var Store = {
     }
     return null;
   },
+  findGroup: function (id) {
+    var gs = this.state.data.groups || [];
+    for (var i = 0; i < gs.length; i++) {
+      if (gs[i].id === id) return gs[i];
+    }
+    return null;
+  },
+  groupName: function (id) {
+    var g = this.findGroup(id);
+    return g ? g.name : '';
+  },
+  // 按目录分组后的网段（未分组的归入 groupId === ''）
+  groupedSubnets: function () {
+    var out = [];
+    var gs = this.state.data.groups || [];
+    gs.forEach(function (g) {
+      out.push({ group: g, subnets: Store.state.data.subnets.filter(function (s) { return s.groupId === g.id; }) });
+    });
+    out.push({ group: null, subnets: Store.state.data.subnets.filter(function (s) { return !s.groupId; }) });
+    return out;
+  },
   activeSubnet: function () {
     return this.findSubnet(this.state.ui.activeSubnetId);
   },
@@ -1300,6 +1374,54 @@ var Store = {
 };
 
 var ACTIONS = {
+  /* ---- 目录（子网分组，如 ATD / ADR） ---- */
+  'group-add': function (st, patch) {
+    var name = String(patch.name || '').trim();
+    if (!name) throw new CalcError('目录名称不能为空');
+    var dup = st.data.groups.some(function (g) { return g.name === name; });
+    if (dup) throw new CalcError('已存在同名目录 ' + name);
+    st.data.groups.push({
+      id: uid('grp'), name: name, note: patch.note || '',
+      createdAt: nowIso(), updatedAt: nowIso()
+    });
+    return st.data.groups[st.data.groups.length - 1];
+  },
+  'group-update': function (st, id, patch) {
+    var g = null;
+    for (var i = 0; i < st.data.groups.length; i++) if (st.data.groups[i].id === id) g = st.data.groups[i];
+    if (!g) return;
+    if ('name' in patch) {
+      var name = String(patch.name || '').trim();
+      if (!name) throw new CalcError('目录名称不能为空');
+      var dup = st.data.groups.some(function (x) { return x.name === name && x.id !== id; });
+      if (dup) throw new CalcError('已存在同名目录 ' + name);
+      g.name = name;
+    }
+    if ('note' in patch) g.note = patch.note;
+    g.updatedAt = nowIso();
+  },
+  // 删除目录：其下网段变为未分组（不删除网段本身）
+  'group-delete': function (st, id) {
+    var i = st.data.groups.findIndex(function (g) { return g.id === id; });
+    if (i < 0) return;
+    st.data.groups.splice(i, 1);
+    st.data.subnets.forEach(function (s) { if (s.groupId === id) s.groupId = ''; });
+    if (st.ui.collapsedGroups[id]) delete st.ui.collapsedGroups[id];
+  },
+  'group-toggle': function (st, id) {
+    if (!st.ui.collapsedGroups) st.ui.collapsedGroups = {};
+    if (st.ui.collapsedGroups[id]) delete st.ui.collapsedGroups[id];
+    else st.ui.collapsedGroups[id] = true;
+    st.settings.collapsedGroups = st.ui.collapsedGroups;
+  },
+  // 网段归入目录（'' = 未分组）
+  'subnet-assign-group': function (st, subnetId, groupId) {
+    var s = Store.findSubnet(subnetId);
+    if (!s) return;
+    var valid = !groupId || st.data.groups.some(function (g) { return g.id === groupId; });
+    s.groupId = valid ? (groupId || '') : '';
+    s.updatedAt = nowIso();
+  },
   /* ---- 网段 ---- */
   'subnet-add': function (st, patch) {
     var cidr = Calc.normalizeCidr(patch.cidr);
@@ -1308,6 +1430,7 @@ var ACTIONS = {
     st.data.subnets.push({
       id: uid('snt'), name: patch.name || cidr, cidr: cidr,
       vlan: patch.vlan || '', note: patch.note || '',
+      groupId: patch.groupId || '',
       createdAt: nowIso(), updatedAt: nowIso(), ips: {}
     });
     st.ui.activeSubnetId = st.data.subnets[st.data.subnets.length - 1].id;
@@ -1330,6 +1453,7 @@ var ACTIONS = {
     if ('name' in patch) s.name = patch.name;
     if ('vlan' in patch) s.vlan = patch.vlan;
     if ('note' in patch) s.note = patch.note;
+    if ('groupId' in patch) s.groupId = patch.groupId || '';
     s.updatedAt = nowIso();
   },
   'subnet-delete': function (st, id) {
@@ -1412,13 +1536,7 @@ Render.theme = function () {
   if (t) document.documentElement.setAttribute('data-theme', t);
   else document.documentElement.removeAttribute('data-theme');
 };
-Render.subnetList = function () {
-  var box = $('#subnet-list');
-  var list = Store.state.data.subnets.slice();
-  if (!list.length) {
-    box.innerHTML = '<div class="empty-state">暂无网段<br>点击上方「＋ 新增」创建</div>';
-    return;
-  }
+Render.sortSubnets = function (list) {
   // 排序（设置持久化，默认创建顺序）
   var sort = Store.state.settings.subnetSort || 'created';
   if (sort === 'name') {
@@ -1436,21 +1554,71 @@ Render.subnetList = function () {
       return ub - ua;
     });
   }
+  return list;
+};
+Render.subnetCard = function (s) {
+  var util = 0;
+  try { util = Store.subnetStats(s).util; } catch (e) {}
+  return '<div class="snt-card' + (s.id === Store.state.ui.activeSubnetId ? ' active' : '') + '" data-action="subnet-select" data-id="' + s.id + '">'
+    + '<div class="nm"><span>' + esc(s.name) + '</span>'
+    + '<span class="ops">'
+    + '<button data-action="subnet-edit" data-id="' + s.id + '" title="编辑">✎</button>'
+    + '<button data-action="subnet-delete" data-id="' + s.id + '" title="删除">🗑</button>'
+    + '</span></div>'
+    + '<div class="cidr">' + esc(s.cidr) + (s.vlan !== '' && s.vlan != null ? ' · VLAN' + esc(s.vlan) : '') + '</div>'
+    + '<div class="util-bar"><i style="width:' + util + '%"></i></div>'
+    + '<div class="util-txt">已分配 ' + util + '%</div>'
+    + '</div>';
+};
+Render.subnetList = function () {
+  var box = $('#subnet-list');
+  var all = Store.state.data.subnets;
+  var groups = Store.state.data.groups || [];
+  if (!all.length && !groups.length) {
+    box.innerHTML = '<div class="empty-state">暂无网段<br>点击上方「＋ 新增」创建<br>或先建「＋ 目录」分组管理</div>';
+    return;
+  }
+  var collapsed = Store.state.ui.collapsedGroups || {};
   var html = '';
-  list.forEach(function (s) {
-    var stats, util = 0;
-    try { stats = Store.subnetStats(s); util = stats.util; } catch (e) { stats = null; }
-    html += '<div class="snt-card' + (s.id === Store.state.ui.activeSubnetId ? ' active' : '') + '" data-action="subnet-select" data-id="' + s.id + '">'
-      + '<div class="nm"><span>' + esc(s.name) + '</span>'
+  var renderCards = function (list) {
+    return Render.sortSubnets(list.slice()).map(Render.subnetCard).join('');
+  };
+  // 已建目录（含空目录）
+  groups.forEach(function (g) {
+    var mine = all.filter(function (s) { return s.groupId === g.id; });
+    var isCollapsed = !!collapsed[g.id];
+    var assigned = 0;
+    mine.forEach(function (s) { try { assigned += Store.subnetStats(s).assigned; } catch (e) {} });
+    html += '<div class="grp' + (isCollapsed ? ' collapsed' : '') + '">'
+      + '<div class="grp-head" data-action="group-toggle" data-id="' + g.id + '">'
+      + '<button class="grp-caret" data-action="group-toggle" data-id="' + g.id + '" title="' + (isCollapsed ? '展开' : '折叠') + '" aria-expanded="' + (!isCollapsed) + '">' + (isCollapsed ? '▸' : '▾') + '</button>'
+      + '<span class="grp-name" title="' + esc(g.note ? g.name + ' · ' + g.note : g.name) + '">' + esc(g.name) + '</span>'
+      + '<span class="grp-meta">' + mine.length + ' 网段 · ' + assigned + ' 已分配</span>'
       + '<span class="ops">'
-      + '<button data-action="subnet-edit" data-id="' + s.id + '" title="编辑">✎</button>'
-      + '<button data-action="subnet-delete" data-id="' + s.id + '" title="删除">🗑</button>'
-      + '</span></div>'
-      + '<div class="cidr">' + esc(s.cidr) + (s.vlan !== '' && s.vlan != null ? ' · VLAN' + esc(s.vlan) : '') + '</div>'
-      + '<div class="util-bar"><i style="width:' + util + '%"></i></div>'
-      + '<div class="util-txt">已分配 ' + util + '%</div>'
+      + '<button data-action="group-edit" data-id="' + g.id + '" title="编辑目录">✎</button>'
+      + '<button data-action="group-delete" data-id="' + g.id + '" title="删除目录">🗑</button>'
+      + '</span>'
+      + '</div>'
+      + (isCollapsed ? '' : '<div class="grp-body">'
+          + (mine.length ? renderCards(mine) : '<div class="grp-empty">该目录下暂无网段</div>')
+          + '</div>')
       + '</div>';
   });
+  // 未分组
+  var loose = all.filter(function (s) { return !s.groupId; });
+  if (loose.length || groups.length) {
+    var looseCollapsed = !!collapsed['__ungrouped'];
+    html += '<div class="grp ungrouped' + (looseCollapsed ? ' collapsed' : '') + '">'
+      + '<div class="grp-head" data-action="group-toggle" data-id="__ungrouped">'
+      + '<button class="grp-caret" data-action="group-toggle" data-id="__ungrouped" aria-expanded="' + (!looseCollapsed) + '">' + (looseCollapsed ? '▸' : '▾') + '</button>'
+      + '<span class="grp-name">未分组</span>'
+      + '<span class="grp-meta">' + loose.length + ' 网段</span>'
+      + '</div>'
+      + (looseCollapsed ? '' : '<div class="grp-body">'
+          + (loose.length ? renderCards(loose) : '<div class="grp-empty">网段已全部归入目录</div>')
+          + '</div>')
+      + '</div>';
+  }
   box.innerHTML = html;
 };
 Render.content = function () {
@@ -1843,13 +2011,49 @@ Dialog.confirm = function (title, body, onOk, okLabel, cancelLabel, onCancel) {
   foot.appendChild(cancel); foot.appendChild(ok);
   dlg.showModal();
 };
+Dialog.promptGroup = function (editId) {
+  var g = editId ? Store.findGroup(editId) : null;
+  $('#dlg-title').textContent = g ? '编辑目录' : '新建目录';
+  $('#dlg-body').innerHTML =
+    '<div class="dlg-form-stack">'
+    + '<div class="fld"><label>目录名称 *</label><input id="g-name" placeholder="如：ATD / ADR" value="' + esc(g ? g.name : '') + '"></div>'
+    + '<div class="fld"><label>备注（可空）</label><input id="g-note" placeholder="如：A 栋数据中心" value="' + esc(g ? g.note : '') + '"></div>'
+    + '<div class="hint">目录用于把多个网段归为一类（如 10 个网段同属 ATD）。删除目录不会删除其中的网段，只会让它们回到「未分组」。</div>'
+    + '<div class="dlg-error" id="g-err"></div>'
+    + '</div>';
+  var foot = $('#dlg-foot');
+  foot.innerHTML = '';
+  var cancel = document.createElement('button');
+  cancel.className = 'btn'; cancel.textContent = '取消';
+  cancel.onclick = function () { $('#dlg').close(); };
+  var ok = document.createElement('button');
+  ok.className = 'btn primary'; ok.textContent = g ? '保存' : '创建';
+  ok.onclick = function () {
+    var name = $('#g-name').value.trim(), note = $('#g-note').value.trim();
+    try {
+      if (g) Store.act('group-update', g.id, { name: name, note: note });
+      else Store.act('group-add', { name: name, note: note });
+      $('#dlg').close();
+    } catch (e) {
+      $('#g-err').textContent = e.message;
+    }
+  };
+  foot.appendChild(cancel); foot.appendChild(ok);
+  $('#dlg').showModal();
+  $('#g-name').focus();
+};
 Dialog.promptSubnet = function (editId) {
   var s = editId ? Store.findSubnet(editId) : null;
+  var groups = Store.state.data.groups || [];
   $('#dlg-title').textContent = s ? '编辑网段' : '新增网段';
+  var groupOpts = '<option value="">（未分组）</option>' + groups.map(function (g) {
+    return '<option value="' + g.id + '"' + (s && s.groupId === g.id ? ' selected' : '') + '>' + esc(g.name) + '</option>';
+  }).join('');
   $('#dlg-body').innerHTML =
     '<div class="dlg-form-stack">'
     + '<div class="fld"><label>网段 CIDR *</label><input id="d-cidr" placeholder="192.168.10.0/24" value="' + esc(s ? s.cidr : '') + '"></div>'
     + '<div class="fld"><label>名称</label><input id="d-name" placeholder="如：办公区-VLAN10" value="' + esc(s ? s.name : '') + '"></div>'
+    + '<div class="fld"><label>所属目录</label><select id="d-group">' + groupOpts + '</select></div>'
     + '<div class="fld"><label>VLAN ID（可空）</label><input id="d-vlan" placeholder="10" value="' + esc(s && s.vlan != null ? s.vlan : '') + '"></div>'
     + '<div class="fld"><label>备注</label><input id="d-note" value="' + esc(s ? s.note : '') + '"></div>'
     + '<div class="dlg-error" id="d-err"></div>'
@@ -1863,7 +2067,8 @@ Dialog.promptSubnet = function (editId) {
   ok.className = 'btn primary'; ok.textContent = s ? '保存' : '创建';
   ok.onclick = function () {
     var cidr = $('#d-cidr').value, name = $('#d-name').value.trim(),
-        vlan = $('#d-vlan').value.trim(), note = $('#d-note').value.trim();
+        vlan = $('#d-vlan').value.trim(), note = $('#d-note').value.trim(),
+        groupId = $('#d-group') ? $('#d-group').value : '';
     try {
       var info = Calc.parseCidr(cidr);
       if (info.hostBitsNonzero) {
@@ -1905,8 +2110,8 @@ Dialog.promptSubnet = function (editId) {
     }
     function doSave() {
       try {
-        if (s) Store.act('subnet-update', s.id, { cidr: cidr, name: name, vlan: vlan, note: note });
-        else Store.act('subnet-add', { cidr: cidr, name: name, vlan: vlan, note: note });
+        if (s) Store.act('subnet-update', s.id, { cidr: cidr, name: name, vlan: vlan, note: note, groupId: groupId });
+        else Store.act('subnet-add', { cidr: cidr, name: name, vlan: vlan, note: note, groupId: groupId });
         $('#dlg').close();
       } catch (e2) {
         $('#d-err').textContent = e2.message;
@@ -1973,7 +2178,7 @@ IO.download = function (blob, name) {
 
 /* ---------- 表格导出（当前网段 → 行） ---------- */
 IO.tableHeaders = function () {
-  return ['IP', '状态', '设备名称', '主机名', '管理IP', '使用接口', '掩码', 'MAC地址', '用途', '设备类型', '备注', '网段'];
+  return ['IP', '状态', '设备名称', '主机名', '管理IP', '使用接口', '掩码', 'MAC地址', '用途', '设备类型', '备注', '网段', '目录'];
 };
 IO.subnetRows = function (s) {
   var info = Calc.parseCidr(s.cidr);
@@ -1987,7 +2192,7 @@ IO.subnetRows = function (s) {
       STATUS_LABEL[rec.status] || rec.status || '',
       rec.name || '', rec.hostname || '', rec.mgmtIp || '', rec.iface || '', rec.mask || '', rec.mac || '',
       rec.purpose || '', DEVTYPE_LABEL[rec.deviceType] || rec.deviceType || '',
-      rec.note || '', s.cidr
+      rec.note || '', s.cidr, Store.groupName(s.groupId)
     ]);
   }
   return rows;
@@ -2004,13 +2209,14 @@ IO.huaweiHeaders = function () {
   return ['子网', '设备名称', '接口名称', '接口IP', '掩码', '备注'];
 };
 IO.HUAWEI_WIDTHS = [15.33, 46.07, 22.8, 23.13, 9.73, 13];
-// 无法由工具推导、留给人工在 Excel 里维护的列（导出时始终为空）
-IO.HUMAN_COLUMNS = ['subnet'];
+// 由网段的目录归属派生、而非记录字段的列（导出时取目录名）
+IO.GROUP_COLUMNS = ['subnet'];
 // 记录字段 → 单元格文本（状态/设备类型按表头习惯输出中文）
-IO.fieldCell = function (rec, ip, field, isSiblingFirst) {
+IO.fieldCell = function (rec, ip, field, sub) {
   switch (field) {
     case 'ip': return ip;
-    case 'subnet': return '';                 // 人工维护列，留空
+    // 目录列：网段已归入目录时回填目录名，未归组时留空
+    case 'subnet': return sub ? Store.groupName(sub.groupId) : '';
     case 'status': return STATUS_LABEL[rec.status] || rec.status || '';
     case 'deviceType': return DEVTYPE_LABEL[rec.deviceType] || rec.deviceType || '';
     default: return rec[field] || '';
@@ -2024,7 +2230,7 @@ IO.huaweiRow = function (s, ip, rec) {
   }
   var note = IO.huaweiNote(rec);
   return [
-    '', rec.name || '', rec.iface || '', ip, mask, note   // 子网列留空，人工维护
+    Store.groupName(s.groupId), rec.name || '', rec.iface || '', ip, mask, note
   ];
 };
 // 把没有独立列的字段汇总进备注
@@ -2043,8 +2249,7 @@ IO.fieldExtraText = function (rec, field) {
   if (field === 'deviceType') return '设备类型: ' + IO.fieldCell(rec, '', field);
   if (field === 'status') return '状态: ' + IO.fieldCell(rec, '', field);
   return (IO.FIELD_LABEL[field] || field) + ': ' + (rec[field] || '');
-};
-IO.huaweiNote = function (rec) {
+};IO.huaweiNote = function (rec) {
   var extras = ['hostname', 'mgmtIp', 'mac', 'purpose', 'deviceType', 'status']
     .filter(function (f) { return IO.fieldHasExtra(rec, f); })
     .map(function (f) { return IO.fieldExtraText(rec, f); });
@@ -2073,11 +2278,11 @@ IO.huaweiTemplateRow = function (view, s, ip, rec) {
   view.cols.forEach(function (c) {
     if (!c.field) { cells.push(''); return; }
     used[c.field] = true;
-    cells.push(IO.fieldCell(rec, ip, c.field));
+    cells.push(IO.fieldCell(rec, ip, c.field, s));
   });
   // 模板未覆盖的非空字段 → 并入备注列（找不到备注列则忽略该字段的独立列位）
   var unmapped = TEMPLATE_FIELDS.filter(function (f) {
-    if (used[f] || IO.HUMAN_COLUMNS.indexOf(f) >= 0 || f === 'ip') return false;
+    if (used[f] || IO.GROUP_COLUMNS.indexOf(f) >= 0 || f === 'ip') return false;
     return IO.fieldHasExtra(rec, f);
   });
   if (unmapped.length) {
@@ -2806,7 +3011,10 @@ Wizard.stepMerge = function () {
     + '</select></div>'
     + '<div class="hint">即将导入 <b>' + st.dataRows.length + '</b> 行到' + (st.subnetCidr ? '网段 <b>' + esc(st.subnetCidr) + '</b>' : (st.mapping && st.mapping.mask != null ? '按「接口IP + 掩码」推导出的各网段' : '各「所属网段」列对应网段')) + '。</div>'
     + '<div class="hint">导出将沿用本次列格式：<b>' + esc((st.headers || []).join(' / ')) + '</b>'
-    + '（「子网」等无法推导的列保持为空，供人工维护）</div>';
+    + (st.mapping && st.mapping.subnet != null
+        ? '；「子网」列的值会自动建成目录（如 ATD）并在导出时回填。'
+        : '；未映射的「子网」列不会建目录，网段将留在「未分组」。')
+    + '</div>';
   var foot = $('#w-foot');
   foot.innerHTML = '';
   var back = document.createElement('button');
@@ -2861,6 +3069,20 @@ Wizard.run = function () {
       if (Store.state.data.subnets[i].cidr === cidr) return Store.state.data.subnets[i];
     }
     return null;
+  };
+  // 「子网」列 → 目录：按名称复用已有目录，不存在则新建；同名目录不会重复建
+  st.groupsCreated = 0;
+  var groupCache = {};
+  (Store.state.data.groups || []).forEach(function (g) { groupCache[g.name] = g.id; });
+  var ensureGroup = function (name) {
+    name = String(name == null ? '' : name).trim();
+    if (!name) return '';
+    if (groupCache[name]) return groupCache[name];
+    var g = { id: uid('grp'), name: name, note: '导入自动创建', createdAt: nowIso(), updatedAt: nowIso() };
+    Store.state.data.groups.push(g);
+    groupCache[name] = g.id;
+    st.groupsCreated++;
+    return g.id;
   };
 
   st.dataRows.forEach(function (row) {
@@ -2939,6 +3161,8 @@ Wizard.run = function () {
     }
     // 「子网」列作为网段名称/分组：自动创建的网段用该值命名（名称仍是 CIDR 说明除外）
     if (huaweiMode && groupName && subnet.name === subnet.cidr) subnet.name = groupName;
+    // 「子网」列 → 目录归属（已有归属不覆盖，避免手工调整被导入冲掉）
+    if (groupName && !subnet.groupId) subnet.groupId = ensureGroup(groupName);
     var info;
     try { info = Calc.parseCidr(subnet.cidr); } catch (e) { stats.outOfRange.push(ipStr); return; }
     // IP 可能带掩码（192.168.1.5/24）
@@ -2983,6 +3207,7 @@ Wizard.run = function () {
   if (stats.sharedIp) msg += '，同址 HSRP/VRRP ' + stats.sharedIp + ' 行已合并并记入备注';
   if (stats.badMask) msg += '，掩码缺失/无效 ' + stats.badMask + ' 条';
   if (stats.inheritedMask) msg += '，沿用同设备掩码 ' + stats.inheritedMask + ' 条';
+  if (st.groupsCreated) msg += '，新建目录 ' + st.groupsCreated + ' 个';
   if (st.derivedCidrs && st.derivedCidrs.length) {
     msg += '，由掩码推导网段 ' + st.derivedCidrs.length + ' 个';
   }
@@ -4397,6 +4622,10 @@ Events.init = function () {
       switch (act) {
         case 'subnet-select': Store.act('subnet-select', id); break;
         case 'add-subnet': Dialog.promptSubnet(); break;
+        case 'add-group': Dialog.promptGroup(); break;
+        case 'group-edit': ev.stopPropagation(); Dialog.promptGroup(id); break;
+        case 'group-delete': ev.stopPropagation(); Events.deleteGroup(id); break;
+        case 'group-toggle': Store.act('group-toggle', id); break;
         case 'subnet-edit': ev.stopPropagation(); Dialog.promptSubnet(id); break;
         case 'subnet-delete': ev.stopPropagation(); Events.deleteSubnet(id); break;
         case 'open-ip': Panel.open(el.dataset.ip); break;
@@ -4500,6 +4729,15 @@ Events.init = function () {
       toast('数据已在其他窗口被修改，建议刷新页面加载最新数据', { ms: 8000, action: '刷新', onAction: function () { location.reload(); } });
     }
   });
+};
+Events.deleteGroup = function (id) {
+  var g = Store.findGroup(id);
+  if (!g) return;
+  var n = Store.state.data.subnets.filter(function (s) { return s.groupId === id; }).length;
+  Dialog.confirm('删除目录',
+    '确定删除目录 <b>' + esc(g.name) + '</b>？<br>'
+    + (n ? '其中 <b>' + n + '</b> 个网段将变为「未分组」，网段和登记记录<b>不会被删除</b>。' : '该目录下暂无网段。'),
+    function () { Store.act('group-delete', id); }, '删除');
 };
 Events.deleteSubnet = function (id) {
   var s = Store.findSubnet(id);
@@ -4691,12 +4929,114 @@ function runSelftest() {
     eq(JSON.stringify(row), JSON.stringify(['', 'FW-A', 'Eth-Trunk10', '192.168.156.9', '30', 'VRRP虚地址']));
     var fb = IO.huaweiRow({ name: 'ATD', cidr: '192.168.156.0/24' }, '192.168.156.9', {});
     eq(fb[4], '24');
-    eq(fb[0], '');   // 子网列留空，供人工维护
+    eq(fb[0], '');   // 未归入目录时子网列留空
   });
-  t('华为导出：子网列始终留空', function () {
-    var row = IO.huaweiRow({ name: 'ATD', cidr: '10.0.0.0/24' }, '10.0.0.1', { name: 'x' });
-    eq(row[0], '');
-    eq(IO.huaweiHeaders()[0], '子网');
+  t('华为导出：子网列回填目录名，未分组时留空', function () {
+    var oldData = Store.state;
+    try {
+      Store.state = { data: {
+        groups: [{ id: 'g1', name: 'ATD' }],
+        subnets: [
+          { id: 's1', name: 'x', cidr: '10.0.0.0/24', groupId: 'g1', ips: {} },
+          { id: 's2', name: 'y', cidr: '10.1.0.0/24', groupId: '', ips: {} }
+        ]
+      } };
+      eq(IO.huaweiRow(Store.state.data.subnets[0], '10.0.0.1', { name: 'a' })[0], 'ATD');
+      eq(IO.huaweiRow(Store.state.data.subnets[1], '10.1.0.1', { name: 'b' })[0], '');
+      eq(IO.huaweiHeaders()[0], '子网');
+    } finally { Store.state = oldData; }
+  });
+  /* ---------- 目录（子网分组） ---------- */
+  // 构造可跑完整 re-render 的临时 state（Store.act 会触发 Render.all）
+  function stubState(data) {
+    return {
+      data: data || Data.fresh(),
+      settings: { density: 32, fontScale: 12, showNetBc: true, subnetSort: 'created', collapsedGroups: {} },
+      ui: { activeSubnetId: '', selectedIp: '', panelOpen: false, search: '', statusFilter: '', collapsedGroups: {} }
+    };
+  }
+  t('目录增删改与归组', function () {
+    var oldData = Store.state;
+    try {
+      Store.state = stubState();
+      Store.act('group-add', { name: 'ATD', note: 'A 栋' });
+      Store.act('group-add', { name: 'ADR' });
+      eq(Store.state.data.groups.length, 2);
+      var atd = Store.state.data.groups[0];
+      eq(Store.groupName(atd.id), 'ATD');
+      // 重名拒绝
+      var threw = false;
+      try { Store.act('group-add', { name: 'ATD' }); } catch (e) { threw = true; }
+      eq(threw, true);
+      // 建网段并归组
+      Store.act('subnet-add', { cidr: '10.0.0.0/24', name: 'a', groupId: atd.id });
+      Store.act('subnet-add', { cidr: '10.1.0.0/24', name: 'b' });
+      var grouped = Store.groupedSubnets();
+      var atdGroup = grouped.filter(function (x) { return x.group && x.group.id === atd.id; })[0];
+      var loose = grouped.filter(function (x) { return !x.group; })[0];
+      eq(atdGroup.subnets.length, 1);
+      eq(loose.subnets.length, 1);
+      // 删目录 → 网段回到未分组，网段本身保留
+      Store.act('group-delete', atd.id);
+      eq(Store.state.data.groups.length, 1);
+      eq(Store.state.data.subnets.length, 2);
+      eq(Store.state.data.subnets[0].groupId, '');
+    } finally { Store.state = oldData; }
+  });
+  t('v1 → v2 迁移补齐 groups 与 groupId', function () {
+    var migrated = Data.migrate({ schemaVersion: 1, subnets: [{ id: 's1', cidr: '10.0.0.0/24', ips: {} }] });
+    eq(migrated.schemaVersion, SCHEMA_VERSION);
+    eq(Array.isArray(migrated.groups), true);
+    eq(migrated.subnets[0].groupId, '');
+  });
+  t('迁移清理悬空目录归属', function () {
+    var migrated = Data.migrate({
+      schemaVersion: 2, groups: [{ id: 'g1', name: 'ATD' }],
+      subnets: [{ id: 's1', cidr: '10.0.0.0/24', groupId: 'g-missing', ips: {} }]
+    });
+    eq(migrated.subnets[0].groupId, '');
+  });
+  t('目录折叠状态', function () {
+    var oldData = Store.state;
+    try {
+      Store.state = stubState();
+      Store.act('group-toggle', 'g1');
+      eq(Store.state.ui.collapsedGroups.g1, true);
+      Store.act('group-toggle', 'g1');
+      eq(!!Store.state.ui.collapsedGroups.g1, false);
+    } finally { Store.state = oldData; }
+  });
+  t('12 列导出含目录列', function () {
+    eq(IO.tableHeaders().indexOf('目录') >= 0, true);
+    eq(IO.tableHeaders().length, 13);
+  });
+  t('子网列取值来自目录归属（非记录字段）', function () {
+    var oldData = Store.state;
+    try {
+      Store.state = {
+        data: { groups: [{ id: 'g1', name: 'ATD' }], subnets: [
+          { id: 's1', name: 'a', cidr: '10.0.0.0/24', groupId: 'g1', ips: {} }
+        ] },
+        ui: { collapsedGroups: {} }, settings: {}
+      };
+      var s = Store.state.data.subnets[0];
+      // 即使记录里带了 subnet 字段，也应输出目录名而非该字段
+      eq(IO.fieldCell({ subnet: '应被忽略' }, '10.0.0.1', 'subnet', s), 'ATD');
+      Store.state.data.subnets[0].groupId = '';
+      eq(IO.fieldCell({}, '10.0.0.1', 'subnet', Store.state.data.subnets[0]), '');
+      // subnet 不在记录字段列表里，不会被重复并入备注
+      eq(TEMPLATE_FIELDS.indexOf('subnet') >= 0 && IO.GROUP_COLUMNS.indexOf('subnet') >= 0, true);
+    } finally { Store.state = oldData; }
+  });
+  t('无「子网」列时网段留在未分组', function () {
+    var oldData = Store.state;
+    try {
+      Store.state = stubState();
+      // 映射不含 subnet → 不应建任何目录
+      eq(Store.state.data.groups.length, 0);
+      var mapped = Wizard.autoMap(['接口IP', '掩码', '设备名称']);
+      eq(mapped.subnet, undefined);
+    } finally { Store.state = oldData; }
   });
   t('导入模板：记住表头与列序并复现', function () {
     var old = Data.loadTemplate();
@@ -4768,7 +5108,7 @@ function runSelftest() {
       eq(rows[1][1], 'FW-B');
       eq(rows[0][5], 'VRRP虚地址');
       eq(rows[1][5], 'VRRP虚地址');
-      eq(rows[0][0], '');   // 子网列留空
+      eq(rows[0][0], '');   // 未归入目录时子网列留空
       eq(/同址设备/.test(rows[0][5] + rows[1][5]), false);
     } finally { Store.state = oldData; if (oldTpl) Data.saveTemplate(oldTpl); }
   });
@@ -5173,7 +5513,7 @@ function boot() {
   if (location.search.indexOf('selftest') >= 0) {
     runSelftest();
     // 自测模式下暴露内部句柄供自动化验证
-    window.__test = { Store: Store, Render: Render, Panel: Panel, IO: IO, Data: Data, Calc: Calc, Wizard: Wizard, Rules: Rules, NetBox: NetBox };
+    window.__test = { Store: Store, Render: Render, Panel: Panel, IO: IO, Data: Data, Calc: Calc, Wizard: Wizard, Rules: Rules, NetBox: NetBox, Dialog: Dialog, Events: Events };
   }
 }
 boot();

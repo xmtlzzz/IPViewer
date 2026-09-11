@@ -30,6 +30,13 @@ const j = async (u) => (await fetch(u)).json();
   const ev = async (expr) => { const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }); if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text); return r.result.value; };
   await send('Runtime.enable'); await send('Page.enable');
   await sleep(1400);
+  // 模块在 IIFE 内，需经 __test 暴露到页面作用域
+  await ev(`(function(){
+    window.IO = window.__test.IO; window.Wizard = window.__test.Wizard;
+    window.Store = window.__test.Store; window.Data = window.__test.Data;
+    window.Dialog = window.__test.Dialog; window.Events = window.__test.Events;
+    return true;
+  })()`);
 
   const out = [];
   const check = (n, ok, d) => { out.push([n, !!ok, d || '']); };
@@ -124,6 +131,98 @@ const j = async (u) => (await fetch(u)).json();
   })()`);
   check('侧栏网段卡片显示 ATD 名称', list.cards.some((c) => c.indexOf('ATD') >= 0), JSON.stringify(list.cards));
   check('统计条显示已分配数量', /已分配/.test(list.stats), list.stats);
+
+  // ---------- 目录分组 UI ----------
+  const grp = await ev(`(function(){
+    var heads = Array.prototype.map.call(document.querySelectorAll('.grp-head'), function(h){ return h.textContent; });
+    var body = document.querySelector('.grp-body');
+    return {
+      heads: heads,
+      cardsInGroup: body ? body.querySelectorAll('.snt-card').length : 0,
+      ungrouped: !!document.querySelector('.grp.ungrouped'),
+      addGroupBtn: !!document.querySelector('[data-action="add-group"]')
+    };
+  })()`);
+  check('侧栏出现目录分组标题', grp.heads.some((h) => h.includes('ATD')), JSON.stringify(grp.heads));
+  check('目录下挂载 6 个网段卡片', grp.cardsInGroup === 6, JSON.stringify(grp));
+  check('存在「未分组」分组', grp.ungrouped === true, JSON.stringify(grp));
+  check('侧栏有「＋ 目录」按钮', grp.addGroupBtn === true, JSON.stringify(grp));
+
+  const collapse = await ev(`(function(){
+    // 明确选中 ATD 目录的标题（.grp-head 的第一次可能是未分组）
+    var head = Array.prototype.filter.call(document.querySelectorAll('.grp-head'), function(h){
+      return h.textContent.indexOf('ATD') >= 0;
+    })[0];
+    // Store.act 会整段重渲染侧栏，故每次操作后重新查询 DOM
+    head.click();
+    var box = Array.prototype.filter.call(document.querySelectorAll('.grp'), function(g){
+      return g.querySelector('.grp-name').textContent === 'ATD';
+    })[0];
+    var collapsed = box.classList.contains('collapsed');
+    var body = box.querySelector('.grp-body');
+    var bodyHidden = body ? getComputedStyle(body).display === 'none' : true;
+    box.querySelector('.grp-head').click();
+    var box2 = Array.prototype.filter.call(document.querySelectorAll('.grp'), function(g){
+      return g.querySelector('.grp-name').textContent === 'ATD';
+    })[0];
+    return { collapsed: collapsed, bodyHidden: bodyHidden,
+             reopened: !box2.classList.contains('collapsed') };
+  })()`);
+  check('点击目录标题可折叠', collapse.collapsed === true && collapse.bodyHidden === true, JSON.stringify(collapse));
+  check('再次点击可展开', collapse.reopened === true, JSON.stringify(collapse));
+
+  const dlg = await ev(`(function(){
+    document.querySelector('[data-action="add-group"]').click();
+    var d = document.getElementById('dlg');
+    var open = d.open, title = document.getElementById('dlg-title').textContent;
+    document.getElementById('g-name').value = 'ADR';
+    document.getElementById('g-note').value = 'B 栋';
+    document.getElementById('dlg-foot').querySelector('.btn.primary').click();
+    var names = Store.state.data.groups.map(function(g){ return g.name; });
+    var heads = Array.prototype.map.call(document.querySelectorAll('.grp-head'), function(h){ return h.textContent; });
+    return { open: open, title: title, names: names, heads: heads, closed: !d.open };
+  })()`);
+  check('新建目录对话框可打开', dlg.open === true && /新建目录/.test(dlg.title), JSON.stringify(dlg));
+  check('新建 ADR 目录成功', JSON.stringify(dlg.names) === JSON.stringify(['ATD', 'ADR']), JSON.stringify(dlg.names));
+  check('空目录也显示在侧栏', dlg.heads.filter((h) => h.includes('ADR')).length === 1, JSON.stringify(dlg.heads));
+
+  const sel = await ev(`(function(){
+    var s = Store.state.data.subnets[0];
+    __test.Dialog.promptSubnet(s.id);
+    var g = document.getElementById('d-group');
+    var opts = g ? Array.prototype.map.call(g.options, function(o){ return o.textContent; }) : null;
+    document.getElementById('dlg').close();
+    return { opts: opts };
+  })()`);
+  check('网段对话框有目录选择器', !!sel.opts && sel.opts[0] === '（未分组）' && sel.opts.includes('ATD'), JSON.stringify(sel));
+
+  const del = await ev(`(function(){
+    var atd = Store.state.data.groups.filter(function(g){ return g.name === 'ATD'; })[0];
+    Events.deleteGroup(atd.id);
+    document.getElementById('cf-foot').querySelector('.btn.primary').click();
+    var d = Store.state.data;
+    return { groups: d.groups.map(function(g){ return g.name; }), subnets: d.subnets.length,
+             ungrouped: d.subnets.filter(function(s){ return !s.groupId; }).length };
+  })()`);
+  check('删除目录后网段保留并回到未分组', del.groups.length === 1 && del.subnets === 6 && del.ungrouped === 6, JSON.stringify(del));
+
+  // 窄视口：目录分组不应导致页面横向溢出
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 800, deviceScaleFactor: 1, mobile: true });
+  await sleep(600);
+  const narrow = await ev(`(function(){
+    return {
+      docW: document.documentElement.scrollWidth,
+      winW: window.innerWidth,
+      grpHeads: document.querySelectorAll('.grp-head').length,
+      headW: document.querySelector('.grp-head') ? Math.round(document.querySelector('.grp-head').getBoundingClientRect().width) : 0,
+      addBtn: !!document.querySelector('[data-action="add-group"]')
+    };
+  })()`);
+  check('窄视口无横向溢出', narrow.docW <= narrow.winW + 1, JSON.stringify(narrow));
+  check('窄视口下目录头仍在视口内', narrow.headW > 0 && narrow.headW <= narrow.winW, JSON.stringify(narrow));
+  check('窄视口下「＋ 目录」仍可用', narrow.addBtn === true, JSON.stringify(narrow));
+  await send('Emulation.clearDeviceMetricsOverride');
+  await sleep(400);
 
   check('无运行时异常', errors.length === 0, errors.map((e) => JSON.stringify(e)).join('|').slice(0, 300));
 

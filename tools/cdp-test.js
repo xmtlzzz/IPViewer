@@ -255,6 +255,22 @@ class CDP {
     check('VRRP 虚地址落在 Eth-Trunk10 的 /24 网段', vrrpRows.every((r) => r.cidr === '192.168.156.0/24'), JSON.stringify(vrrpRows));
     check('同址设备名保留在备注', vrrpRows.length === 1 && /同址设备:/.test(vrrpRows[0].note), JSON.stringify(vrrpRows));
 
+    // 「子网」列 → 目录：应自动建出 ATD 且 6 个网段全部归入
+    const groups = await cdp.eval(`(function(){
+      var d = Store.state.data;
+      return {
+        groups: d.groups.map(function(g){ return g.name; }),
+        assigned: d.subnets.filter(function(s){ return !!s.groupId; }).length,
+        total: d.subnets.length,
+        atdId: d.groups[0] ? d.groups[0].id : null,
+        inAtd: d.subnets.filter(function(s){ return s.groupId === (d.groups[0]||{}).id; }).length,
+        grouped: Store.groupedSubnets().map(function(x){ return (x.group ? x.group.name : '(未分组)') + ':' + x.subnets.length; })
+      };
+    })()`);
+    check('导入自动建目录 ATD', JSON.stringify(groups.groups) === JSON.stringify(['ATD']), JSON.stringify(groups));
+    check('6 个网段全部归入 ATD', groups.total === 6 && groups.assigned === 6 && groups.inAtd === 6, JSON.stringify(groups));
+    check('分组视图结构正确', JSON.stringify(groups.grouped) === JSON.stringify(['ATD:6', '(未分组):0']), JSON.stringify(groups.grouped));
+
     // 子网内 IP 归属正确
     const membership = await cdp.eval(`(function(){
       var out = [];
@@ -282,7 +298,7 @@ class CDP {
         allSameWidth: rows.every(function(r){ return r.length === huawei.length; }),
         first: rows[0],
         ipCol: huawei.indexOf('接口IP'),
-        subnetAllEmpty: rows.every(function(r){ return r[0] === ''; }),
+        subnetAllATD: rows.every(function(r){ return r[0] === 'ATD'; }),
         vrrp: rows.filter(function(r){ return r[5] && r[5].indexOf('VRRP') >= 0; }).length,
         xml: IO.Xlsx.sheetXml([huawei].concat(rows), IO.HUAWEI_WIDTHS)
       };
@@ -290,7 +306,7 @@ class CDP {
     check('导出 12 行且与表头等宽', exported.rowCount === 12 && exported.allSameWidth === true, JSON.stringify(exported.first));
     check('导出复现导入表头与列序', exported.custom === true &&
       JSON.stringify(exported.headers) === JSON.stringify(['子网', '设备名称', '接口名称', '接口IP', '掩码', '备注']), JSON.stringify(exported.headers));
-    check('子网列全部留空（人工维护）', exported.subnetAllEmpty === true, JSON.stringify(exported.first));
+    check('子网列回填目录名 ATD', exported.subnetAllATD === true, JSON.stringify(exported.first));
     check('接口IP 仍在第 4 列，与上传文件一致', exported.ipCol === 3, 'ipCol=' + exported.ipCol);
     check('导出保留 VRRP 备注', exported.vrrp >= 1, 'vrrp=' + exported.vrrp);
     // 还原出的两行应各带一台设备名，且备注里的「同址设备」不再外泄

@@ -1,4 +1,4 @@
-/* 截图验证 UI：导入向导映射步骤、IP 详情面板（含掩码）、导出菜单、华为导入后的网段列表 */
+/* 截图验证 UI：导入向导、目录分组侧栏、折叠态、IP 详情面板、导出菜单 */
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -42,57 +42,81 @@ const j = async (u) => (await fetch(u)).json();
   await send('Runtime.enable'); await send('Page.enable');
   await sleep(1400);
   await ev(`document.getElementById('selftest').remove()`);
+  await ev(`(function(){
+    window.IO = window.__test.IO; window.Wizard = window.__test.Wizard;
+    window.Store = window.__test.Store; window.Data = window.__test.Data;
+    window.Dialog = window.__test.Dialog; window.Events = window.__test.Events;
+    return true;
+  })()`);
 
-  // 1. 导入向导：映射步骤（先"重新映射"跳过预设确认）
+  // 1. 导入向导：映射步骤（点「重新映射」跳过预设确认）
   await ev(`(async function(){
     var bin = atob("${b64}"); var u8 = new Uint8Array(bin.length);
     for (var i=0;i<bin.length;i++) u8[i] = bin.charCodeAt(i);
-    var wb = await __test.IO.Xlsx.read(u8.buffer);
-    __test.Store.state.data.subnets = [];
-    __test.Wizard.start([wb.sheets[0]]);
+    var wb = await IO.Xlsx.read(u8.buffer);
+    Store.state.data.subnets = [];
+    Store.state.data.groups = [];
+    Wizard.start([wb.sheets[0]]);
     var cf = document.getElementById('confirm');
-    if (cf.open) cf.querySelector('#cf-foot .btn').click();  // 取消/重新映射
+    if (cf.open) cf.querySelector('#cf-foot .btn').click();
     return true;
   })()`);
   await sleep(600);
   await shot('01-wizard-mapping');
 
-  // 2. 选好映射 → 进入合并 → 导入
+  // 2. 完成导入 → 目录分组侧栏
   await ev(`(function(){
-    var next = document.getElementById('w-foot').querySelector('.btn.primary');
-    next.click();  // collectMap → stepMerge
-    document.getElementById('w-foot').querySelector('.btn.primary').click(); // run
-    __test.Store.act('subnet-select', __test.Store.state.data.subnets[0].id);
-    return __test.Store.state.data.subnets.length;
+    document.getElementById('w-foot').querySelector('.btn.primary').click();
+    document.getElementById('w-foot').querySelector('.btn.primary').click();
+    Store.act('subnet-select', Store.state.data.subnets[0].id);
+    return true;
   })()`);
   await sleep(900);
-  await shot('02-after-import');
+  await shot('02-sidebar-groups');
 
-  // 3. IP 详情面板（含掩码字段）
+  // 3. 折叠 ATD 目录
   await ev(`(function(){
-    var s = __test.Store.state.data.subnets[0];
-    var ip = Object.keys(s.ips)[0];
-    __test.Store.act('open-panel', ip);
-    return ip;
+    var h = Array.prototype.filter.call(document.querySelectorAll('.grp-head'), function(x){
+      return x.textContent.indexOf('ATD') >= 0; })[0];
+    h.click();
+    return true;
+  })()`);
+  await sleep(600);
+  await shot('03-group-collapsed');
+
+  // 4. 展开并新建一个空目录 ADR
+  await ev(`(function(){
+    var h = Array.prototype.filter.call(document.querySelectorAll('.grp-head'), function(x){
+      return x.textContent.indexOf('ATD') >= 0; })[0];
+    h.click();
+    document.querySelector('[data-action="add-group"]').click();
+    document.getElementById('g-name').value = 'ADR';
+    document.getElementById('g-note').value = 'B 栋新增站点';
+    document.getElementById('dlg-foot').querySelector('.btn.primary').click();
+    return true;
+  })()`);
+  await sleep(600);
+  await shot('04-group-created');
+
+  // 5. IP 详情面板（含掩码字段）
+  await ev(`(function(){
+    var s = Store.state.data.subnets[0];
+    Store.act('open-panel', Object.keys(s.ips)[0]);
+    return true;
   })()`);
   await sleep(500);
-  await shot('03-panel-mask');
+  await shot('05-panel-mask');
 
-  // 4. 导出菜单（含华为格式）
+  // 6. 导出菜单
   await ev(`(function(){
-    __test.Store.act('close-panel');
+    Store.act('close-panel');
     var btn = document.querySelector('[data-action="export-table"]');
     var r = btn.getBoundingClientRect();
     btn.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.left, clientY: r.bottom }));
     return true;
   })()`);
   await sleep(500);
-  await shot('04-export-menu');
-
-  // 5. 暗色主题下的面板
-  await ev(`(function(){ __test.Store.act('close-panel'); __test.Store.act('toggle-theme'); var ex = document.querySelector('.export-menu'); if (ex) ex.remove(); return true; })()`);
-  await sleep(600);
-  await shot('05-dark-grid');
+  await shot('06-export-menu');
 
   console.log('输出目录: ' + OUT);
   child.kill();

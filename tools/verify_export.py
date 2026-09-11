@@ -24,8 +24,8 @@ assert hdr == ['子网', '设备名称', '接口名称', '接口IP', '掩码', '
 assert len(rows) == 13, len(rows)          # 表头 + 12 行
 assert ws.auto_filter.ref == 'A1:F1', ws.auto_filter.ref
 assert all(len(r) == 6 for r in rows)
-# 子网列必须全部留空（人工维护列）
-assert all(r[0] in (None, '') for r in rows[1:]), [r[0] for r in rows[1:]]
+# 子网列应由目录名回填（导入时「子网」列已建出 ATD 目录）
+assert all(r[0] == 'ATD' for r in rows[1:]), [r[0] for r in rows[1:]]
 # VRRP 两行还原
 vrrp = [r for r in rows if r[5] and 'VRRP' in str(r[5])]
 assert len(vrrp) == 2, vrrp
@@ -37,4 +37,4 @@ assert not any('状态' in str(r[5]) for r in rows), [r[5] for r in rows]
 masks = {str(r[3]): str(r[4]) for r in rows}
 assert masks['192.168.249.145'] == '30' and masks['192.168.249.149'] == '30', masks
 assert masks['1.1.1.1'] == '24', masks
-print('\nOK  openpyxl 校验通过：6 列 / 子网列留空 / 自动筛选 / 列宽 / 中文 / VRRP 还原 / 无冗余状态 均正确')
+print('\nOK  openpyxl 校验通过：6 列 / 子网列回填目录名 / 自动筛选 / 列宽 / 中文 / VRRP 还原 / 无冗余状态 均正确')
