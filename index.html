@@ -860,6 +860,7 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
         <option value="14">大</option>
       </select></label>
       <button class="btn" id="tb-free" title="打开当前网段第一个空闲地址">跳到空闲</button>
+      <button class="hbtn" data-action="grid-png" title="导出格子图为 PNG">导出图片</button>
       <div class="legend" id="legend"></div>
       <button class="hbtn" data-action="conflict-scan" title="扫描所有网段中重复登记的 IP">冲突扫描</button>
     </div>
@@ -5306,6 +5307,171 @@ NetBox.finishSync = function () {
 };
 
 /* ============================================================
+ * [9c] PngExport —— 格子图导出 PNG（报表用浅色底，不随暗色主题）
+ * ============================================================ */
+var PngExport = {};
+// 读取 CSS 变量（状态色随当前主题取值；底色/正文用固定浅色值保证报表可读）
+PngExport.cssVar = function (name, fallback) {
+  var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback || '#000000';
+};
+// 列数 → 单格边长与字号（列越多格子越小，字号自适应）
+PngExport.cellSpec = function (cols) {
+  if (cols >= 64) return { cell: 26, font: 9 };
+  if (cols >= 48) return { cell: 30, font: 10 };
+  return { cell: 34, font: 11 };
+};
+PngExport.FONT = '"Segoe UI", "Microsoft YaHei", sans-serif';
+PngExport.MONO = 'Consolas, "Microsoft YaHei", monospace';
+
+// 绘制格子图并返回 canvas（解析失败/超上限时抛错，不落盘）
+PngExport.build = function (subnet) {
+  var info = Calc.parseCidr(subnet.cidr);
+  if (info.total > RENDER_LIMIT) {
+    throw new CalcError('该网段共 ' + info.total + ' 个地址，超出格子图导出上限（' + RENDER_LIMIT + '）');
+  }
+  var stats = Store.subnetStats(subnet);
+  var cols = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--cols'), 10);
+  if (!isFinite(cols) || cols < 1) cols = 32;
+
+  // 收集要画的格子（与 renderGrid 同规则：忽略搜索 dim，网络/广播按设置显隐）
+  var cells = [];
+  for (var i = 0; i < info.total; i++) {
+    var ip = Calc.idxToIp(info.network, i);
+    var role = Calc.roleOf(i, info.total, info.pre);
+    if ((role === 'network' || role === 'broadcast') && !Store.state.settings.showNetBc) continue;
+    var rec = subnet.ips[ip];
+    cells.push({ ip: ip, role: role, status: rec ? rec.status : (role !== 'host' ? role : 'free') });
+  }
+
+  var PAD = 16, GAP = 2, TITLE_H = 24, STATS_H = 18, LEGEND_H = 24;
+  var GRID_TOP = PAD + TITLE_H + STATS_H + 6;
+  var spec = PngExport.cellSpec(cols);
+  var rows = Math.max(1, Math.ceil(cells.length / cols));
+  // 高度上限保护：估算超 16000px 时按最大列数 64 重排（列多则行少，高度更小）
+  if (GRID_TOP + rows * spec.cell + LEGEND_H + PAD * 2 > 16000) {
+    cols = 64;
+    spec = PngExport.cellSpec(cols);
+    rows = Math.max(1, Math.ceil(cells.length / cols));
+  }
+  var gridW = cols * spec.cell + (cols - 1) * GAP;
+  var gridH = rows * spec.cell + (rows - 1) * GAP;
+
+  var canvas = document.createElement('canvas');
+  canvas.width = gridW + PAD * 2;
+  canvas.height = GRID_TOP + gridH + LEGEND_H + PAD * 2;
+  var ctx = canvas.getContext('2d');
+
+  // 报表底色固定白色、正文固定深色（不随暗色主题），状态色取当前变量值
+  var TEXT = '#1f2430', MUTED = '#6b7280';
+  var C = {};
+  ['assigned', 'free', 'reserved', 'conflict', 'net'].forEach(function (key) {
+    C[key] = PngExport.cssVar('--st-' + key, key === 'net' ? '#d1d5db' : '#e5e7eb');
+    C[key + 'T'] = PngExport.cssVar('--st-' + key + '-t', key === 'net' ? '#6b7280' : '#374151');
+  });
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // 头部第一行：网段名 + CIDR + VLAN（若有）
+  var title = subnet.name ? subnet.name + ' · ' + subnet.cidr : subnet.cidr;
+  if (subnet.vlan) title += ' · VLAN ' + subnet.vlan;
+  ctx.fillStyle = TEXT;
+  ctx.font = '600 18px ' + PngExport.FONT;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(title, PAD, PAD + 18);
+
+  // 头部第二行：统计（来自 Store.subnetStats）
+  ctx.fillStyle = MUTED;
+  ctx.font = '12px ' + PngExport.FONT;
+  ctx.fillText('总地址 ' + stats.total + ' · 可用 ' + stats.usable + ' · 已分配 ' + stats.assigned
+    + ' · 预留 ' + stats.reserved + ' · 冲突 ' + stats.conflict + ' · 空闲 ' + stats.free
+    + ' · 利用率 ' + stats.util + '%', PAD, PAD + TITLE_H + 14);
+
+  // 格子矩阵：底色/文字色对应状态，文字为 IP 末段
+  var KNOWN = { assigned: 1, free: 1, reserved: 1, conflict: 1 };
+  for (var k = 0; k < cells.length; k++) {
+    var cell = cells[k];
+    var col = k % cols, row = Math.floor(k / cols);
+    var x = PAD + col * (spec.cell + GAP);
+    var y = GRID_TOP + row * (spec.cell + GAP);
+    var isNetBc = cell.role === 'network' || cell.role === 'broadcast';
+    var bg = isNetBc ? C.net : (KNOWN[cell.status] ? C[cell.status] : C.free);
+    var fg = isNetBc ? C.netT : (KNOWN[cell.status] ? C[cell.status + 'T'] : C.freeT);
+    ctx.fillStyle = bg;
+    ctx.fillRect(x, y, spec.cell, spec.cell);
+    ctx.fillStyle = fg;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '600 ' + spec.font + 'px ' + PngExport.MONO;
+    ctx.fillText(cell.ip.split('.').pop(), x + spec.cell / 2, y + spec.cell / 2 + 1);
+    if (isNetBc) {   // 网络/广播：角标文字（斜纹的简化画法）
+      ctx.font = '8px ' + PngExport.FONT;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(cell.role === 'network' ? '网' : '广', x + 2, y + 1);
+    }
+    if (cell.ip === Store.state.ui.selectedIp) {   // 选中格高亮描边
+      ctx.strokeStyle = TEXT;
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(x + 1.25, y + 1.25, spec.cell - 2.5, spec.cell - 2.5);
+    }
+  }
+
+  // 底部图例行：四态色块 + 标签 + 生成时间
+  var ly = GRID_TOP + gridH + PAD + 8;
+  var lx = PAD;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  [['assigned', '已分配'], ['free', '空闲'], ['reserved', '预留'], ['conflict', '冲突']].forEach(function (it) {
+    ctx.fillStyle = C[it[0]];
+    ctx.fillRect(lx, ly - 6, 12, 12);
+    lx += 17;
+    ctx.fillStyle = TEXT;
+    ctx.font = '11px ' + PngExport.FONT;
+    ctx.fillText(it[1], lx, ly);
+    lx += ctx.measureText(it[1]).width + 16;
+  });
+  var d = new Date(), p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+  ctx.fillStyle = MUTED;
+  ctx.fillText('生成于 ' + d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate())
+    + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()), lx, ly);
+  return canvas;
+};
+
+// 导出当前激活网段（无激活网段时 toast 提示）
+PngExport.exportCurrent = function () {
+  var s = Store.activeSubnet();
+  if (!s) { toast('请先选择要导出的网段', { err: true }); return; }
+  var canvas = PngExport.build(s);   // 解析失败/超上限时抛错，由入口监听统一提示
+  var d = new Date(), p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+  var name = (s.name || s.cidr) + '-格子图-' + d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate()) + '.png';
+  var save = function (blob) {
+    if (!blob) {   // toBlob 不可用/返回空时兜底：dataURL → Blob
+      var bin = atob(canvas.toDataURL('image/png').split(',')[1]);
+      var u8 = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      blob = new Blob([u8], { type: 'image/png' });
+    }
+    IO.download(blob, name);
+  };
+  if (canvas.toBlob) canvas.toBlob(save, 'image/png');
+  else save(null);
+};
+
+// 入口监听：顶栏「导出图片」按钮（主 switch 对未知 action 无 default，不冲突）
+document.addEventListener('click', function (ev) {
+  var btn = ev.target && ev.target.closest ? ev.target.closest('[data-action="grid-png"]') : null;
+  if (!btn) return;
+  try { PngExport.exportCurrent(); }
+  catch (e) {
+    console.error(e);
+    toast(e instanceof CalcError ? e.message : '导出失败：' + (e.message || e), { err: true });
+  }
+});
+
+/* ============================================================
  * [10] Events —— 事件层（document 级事件委托）
  * ============================================================ */
 var Events = {};
@@ -6515,6 +6681,44 @@ function runSelftest() {
       eq(d.top[0].util, 2);
       eq(d.top[1].cidr, '10.0.0.0/24');
     } finally { Store.state = oldState; }
+  });
+
+  /* ---------- 格子图 PNG 导出 ---------- */
+  t('PngExport.build 渲染 /26 网段画布', function () {
+    var oldData = Store.state;
+    try {
+      Store.state = stubState();
+      Store.act('subnet-add', { cidr: '10.9.9.0/26', name: '自测网段', vlan: '100' });
+      var s = Store.activeSubnet();
+      Store.act('ip-set', s.id, '10.9.9.5', { status: 'assigned', name: 'dev-a' });
+      Store.act('ip-set', s.id, '10.9.9.6', { status: 'reserved', name: 'dev-b' });
+      Store.act('select-ip', '10.9.9.5');
+      var canvas = PngExport.build(s);
+      eq(canvas.width > 0, true, 'width');
+      eq(canvas.height > 0, true, 'height');
+      eq(canvas.height <= 16000, true, '高度上限');
+      eq(canvas.width <= 4096, true, '宽度合理');
+      var url = canvas.toDataURL('image/png');
+      eq(url.indexOf('data:image/png') === 0, true, 'dataURL 前缀');
+      eq(url.length > 1000, true, 'dataURL 长度');
+      // 网络/广播隐藏：/26 共 64 格，隐藏网/广后格数 62，画布仍有效
+      Store.state.settings.showNetBc = false;
+      var c2 = PngExport.build(s);
+      eq(c2.width > 0 && c2.height > 0, true, '隐藏网/广后仍可绘制');
+      eq(c2.toDataURL('image/png').length > 1000, true, '隐藏网/广后 dataURL');
+    } finally { Store.state = oldData; }
+  });
+  t('PngExport 无激活网段时提示且不触发下载', function () {
+    var oldData = Store.state, oldDl = IO.download, called = 0;
+    try {
+      Store.state = stubState();
+      Store.state.ui.activeSubnetId = '';
+      IO.download = function () { called++; };
+      var before = document.querySelectorAll('#toasts .toast').length;
+      PngExport.exportCurrent();
+      eq(called, 0, '不应调用下载');
+      eq(document.querySelectorAll('#toasts .toast').length, before + 1, '应出现 toast 提示');
+    } finally { Store.state = oldData; IO.download = oldDl; }
   });
 
   var asyncPending = 0;
