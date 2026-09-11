@@ -673,6 +673,13 @@ dialog::backdrop { background:rgba(15,23,42,.42); }
 }
 .rules-actions .btn { min-height:32px; padding:0 11px; }
 .rules-hint { margin-top:10px !important; }
+/* ---- feat: wizard-dates ---- */
+.rules-disclosure > .w-date-body { padding:12px; background:var(--panel); }
+.w-date-body .hint { margin:0 0 8px; }
+.w-date-list { display:flex; flex-wrap:wrap; gap:6px 18px; }
+.w-date-col { display:inline-flex; align-items:center; gap:6px; font-size:13px; line-height:1.6; }
+.w-date-col input { margin:0; }
+.map-row .w-date-flag { font-size:12px; }
 .side-head-tools { display:flex; align-items:center; gap:4px; }
 .side-sort {
   min-height:30px;
@@ -3455,7 +3462,24 @@ IO.Xlsx.zipStore = function (files) {
 
 /* ---------- 导入向导（列映射） ---------- */
 var Wizard = {};
-Wizard.state = null;   // {sheets, sheetIdx, headers, rows, mapping, merge, subnetCidr}
+Wizard.state = null;   // {sheets, sheetIdx, headers, rows, mapping, merge, subnetCidr, dateCols}
+/* ---- feat: wizard-dates ---- */
+// Excel 1900 日期系统序列号 → 'YYYY-MM-DD'。
+// Excel 有著名的 1900-02-29 幽灵日期 bug：serial 60 在 Excel 里显示为不存在的 1900-02-29，
+// serial ≥ 61 起才与真实日期一致。本实现把 serial 60 并入 1900-02-28（明确语义，见自测）。
+Wizard._serialToISO = function (serial) {
+  // serial < 60：历元 1899-12-31（serial 1 = 1900-01-01）；
+  // serial ≥ 60：历元 1899-12-30 + serial 天（偏移跳过幽灵日）。
+  var d = new Date(Date.UTC(1899, 11, 30) + (serial < 60 ? serial + 1 : serial) * 86400000);
+  return d.toISOString().slice(0, 10);
+};
+// 仅接受数字序列号（约 1954-10 ~ 2099-12），小数取日期部分；其余一律原样返回 null
+Wizard.serialToDate = function (v) {
+  if (typeof v !== 'number' || !isFinite(v)) return null;
+  var serial = Math.floor(v);
+  if (serial < 20000 || serial > 73050) return null;
+  return Wizard._serialToISO(serial);
+};
 Wizard.open = function (file) {
   var ext = file.name.toLowerCase().split('.').pop();
   $('#w-err').textContent = '';
@@ -3489,7 +3513,7 @@ Wizard.start = function (sheets) {
   sheets = sheets.map(function (s) {
     return { name: s.name, rows: s.rows.filter(function (r) { return r.some(function (c) { return String(c).trim() !== ''; }); }) };
   });
-  Wizard.state = { sheets: sheets, sheetIdx: 0, mapping: null, merge: 'merge', subnetCidr: '', dateCols: {} };
+  Wizard.state = { sheets: sheets, sheetIdx: 0, mapping: null, merge: 'merge', subnetCidr: '', dateCols: [] };
   $('#wiz').showModal();
   if (sheets.length > 1) Wizard.stepSheet();
   else Wizard.stepMap();
@@ -3582,11 +3606,13 @@ Wizard.stepMap = function () {
   st.headers = headers;
   st.dataRows = rows.slice(1);
   st.preview = rows.slice(0, 11);
+  st.dateCols = [];   // feat: wizard-dates：重置日期列，colmap 命中时在下方恢复
 
   // colmap 自动应用
   var cm = Data.loadColmap();
   if (cm && JSON.stringify(cm.headers) === JSON.stringify(headers) && cm.mapping && cm.mapping.ip != null) {
     st.mapping = Object.assign({}, cm.mapping);
+    st.dateCols = Array.isArray(cm.dateCols) ? cm.dateCols.slice() : [];   // feat: wizard-dates：恢复勾选的日期列
     st.profile = null;
     Wizard.confirmAuto();
     return;
@@ -3702,6 +3728,24 @@ document.addEventListener('click', function (ev) {
     action.closest('.kw-row').remove();
   }
 });
+/* ---- feat: wizard-dates ---- */
+// 「日期列转换」折叠区：列出当前已映射的列，勾选后导入时把 Excel 日期序列号转为日期字符串
+Wizard.renderDateCols = function () {
+  var st = Wizard.state;
+  var mapped = {};
+  Object.keys(st.mapping || {}).forEach(function (k) { mapped[st.mapping[k]] = true; });
+  (st.noteCols || []).forEach(function (ci) { mapped[ci] = true; });   // 「并入备注」列同样支持日期转换
+  var cols = Object.keys(mapped).map(Number).sort(function (a, b) { return a - b; });
+  var list = cols.length ? cols.map(function (i) {
+    var on = (st.dateCols || []).indexOf(i) >= 0;
+    return '<label class="w-date-col"><input type="checkbox" data-datecol="' + i + '"' + (on ? ' checked' : '') + '> '
+      + esc(st.headers[i] || ('列' + (i + 1))) + '（第 ' + (i + 1) + ' 列）</label>';
+  }).join('') : '<span class="hint">暂无已映射的列。</span>';
+  var n = (st.dateCols || []).length;
+  return '<details class="rules-disclosure" data-wiz-datecols><summary>日期列转换' + (n ? '（' + n + ' 列已勾选）' : '') + '</summary>'
+    + '<div class="w-date-body"><div class="hint">Excel 日期单元格常被读成数字序列号（如 45000 ≈ 2023-03-15）。勾选对应列后，导入时会把可识别的序列号原位转换为 YYYY-MM-DD 日期字符串（约 1954~2099 年），其余值保持不变。</div>'
+    + '<div class="w-date-list">' + list + '</div></div></details>';
+};
 Wizard.renderMapUI = function () {
   var st = Wizard.state;
   var opts = function (selected) {
@@ -3713,7 +3757,9 @@ Wizard.renderMapUI = function () {
     if (t[0] === '_ignore') return '';
     var cur = st.mapping[t[0]];
     var sel = (cur == null ? '' : cur);
-    return '<div class="map-row"><label>' + t[1] + '</label><select data-target="' + t[0] + '">' + opts(sel) + '</select></div>';
+    // 勾选为日期列的映射行旁加 📅 标记
+    var flag = (cur != null && (st.dateCols || []).indexOf(cur) >= 0) ? ' <span class="w-date-flag" title="该列将在导入时转换为日期">📅</span>' : '';
+    return '<div class="map-row"><label>' + t[1] + flag + '</label><select data-target="' + t[0] + '">' + opts(sel) + '</select></div>';
   }).join('');
   var subnets = Store.state.data.subnets.map(function (s) {
     return '<option value="' + esc(s.cidr) + '"' + (st.subnetCidr === s.cidr ? ' selected' : '') + '>' + esc(s.name + '（' + s.cidr + '）') + '</option>';
@@ -3727,6 +3773,7 @@ Wizard.renderMapUI = function () {
     + '<div class="map-grid">' + rowsHtml + '</div>'
     + '<div class="map-row subnet-target"><label>导入到网段</label><select id="w-subnet"><option value="">（按「所属网段」列自动）</option>' + subnets + '</select></div>'
     + '<div class="hint">若文件包含「所属网段」列且选择自动，将按该列分组导入（不存在的网段会自动创建）。</div>'
+    + Wizard.renderDateCols()
     + Wizard.renderKeywordEditor();
   // 恢复已选
   $('#w-body').querySelectorAll('select[data-target]').forEach(function (sel) {
@@ -3762,10 +3809,15 @@ Wizard.collectMap = function () {
   $('#w-body').querySelectorAll('select[data-target="_note"]').forEach(function (sel) {
     if (sel.value !== '') st.noteCols.push(+sel.value);
   });
+  // 日期列：勾选的列在导入时做 Excel 序列号 → 日期字符串转换
+  st.dateCols = [];
+  $('#w-body').querySelectorAll('input[data-datecol]').forEach(function (cb) {
+    if (cb.checked) st.dateCols.push(+cb.dataset.datecol);
+  });
   st.mapping = m;
   st.subnetCidr = $('#w-subnet').value;
   // 持久化 colmap（含表头指纹）
-  Data.saveColmap({ headers: st.headers, mapping: m, savedAt: nowIso() });
+  Data.saveColmap({ headers: st.headers, mapping: m, dateCols: st.dateCols, savedAt: nowIso() });
   Wizard.stepMerge();
 };
 Wizard.stepMerge = function () {
@@ -3792,6 +3844,16 @@ Wizard.stepMerge = function () {
   run.onclick = Wizard.run;
   foot.appendChild(back); foot.appendChild(run);
 };
+// 对数据行数组按 dateCols 原位应用日期转换：序列号可识别 → 替换为 YYYY-MM-DD，其余值原样保留
+Wizard.applyDateCols = function (rows, dateCols) {
+  (dateCols || []).forEach(function (ci) {
+    rows.forEach(function (row) {
+      var d = Wizard.serialToDate(row[ci]);
+      if (d !== null) row[ci] = d;
+    });
+  });
+  return rows;
+};
 Wizard.run = function () {
   var st = Wizard.state;
   st.merge = $('#w-merge') ? $('#w-merge').value : 'merge';
@@ -3806,6 +3868,8 @@ Wizard.run = function () {
     source: (st.sheets[st.sheetIdx] || {}).name || '',
     savedAt: nowIso()
   });
+  // 日期列原位转换（feat: wizard-dates）：发生在读取任何行数据之前，转换结果对全部映射目标生效
+  Wizard.applyDateCols(st.dataRows, st.dateCols);
 
   // 掩码列 + 接口IP 反推网段时的候选池
   st.derivedCidrs = [];
@@ -6842,6 +6906,41 @@ function runSelftest() {
       Render.grid(s);
       eq(document.querySelectorAll('#grid .cell.dim').length, 0, '缺 adv 状态时容错不变暗');
     } finally { Store.state = old; }
+  });
+
+  /* ---------- Excel 日期列转换（feat: wizard-dates） ---------- */
+  // 幽灵日期语义写死：serial 60（Excel 显示不存在的 1900-02-29）按 1900-02-28 处理
+  t('serialToDate 历元锚点（含幽灵日期）', function () {
+    eq(Wizard._serialToISO(1), '1900-01-01');
+    eq(Wizard._serialToISO(59), '1900-02-28');
+    eq(Wizard._serialToISO(60), '1900-02-28');
+    eq(Wizard._serialToISO(61), '1900-03-01');
+    eq(Wizard._serialToISO(45000), '2023-03-15');
+  });
+  t('serialToDate 范围边界与拒绝非数字', function () {
+    eq(Wizard.serialToDate(20000), '1954-10-03');   // 下界（含）
+    eq(Wizard.serialToDate(73050), '2099-12-31');   // 上界（含）
+    eq(Wizard.serialToDate(19999), null);
+    eq(Wizard.serialToDate(73051), null);
+    eq(Wizard.serialToDate('45000'), null);         // 字符串不转换
+    eq(Wizard.serialToDate(NaN), null);
+    eq(Wizard.serialToDate(Infinity), null);
+    eq(Wizard.serialToDate(null), null);
+    eq(Wizard.serialToDate(undefined), null);
+  });
+  t('serialToDate 小数取日期部分', function () {
+    eq(Wizard.serialToDate(45000.75), '2023-03-15');
+    eq(Wizard.serialToDate(20000.999), '1954-10-03');
+  });
+  t('applyDateCols 行数据原位转换', function () {
+    var rows = [['10.0.0.1', 45000, 'web'], ['10.0.0.2', 'x', 20000], ['10.0.0.3', 123, null]];
+    Wizard.applyDateCols(rows, [1, 2]);
+    eq(rows[0][1], '2023-03-15');   // 序列号 → 日期
+    eq(rows[0][2], 'web');          // 非序列号原样
+    eq(rows[1][1], 'x');            // 字符串原样
+    eq(rows[1][2], '1954-10-03');
+    eq(rows[2][1], 123);            // 低于范围下界的数字原样
+    eq(rows[2][2], null);
   });
 
   var asyncPending = 0;
