@@ -959,6 +959,7 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
         <option value="other">其他</option>
       </select>
     </div>
+    <div class="fld"><label>标签（逗号分隔）</label><input id="p-tags" placeholder="如：核心, 出口, 待规划"></div>
     <div class="fld"><label>备注</label><textarea id="p-note" rows="3"></textarea></div>
     <div class="fld meta" id="p-meta" style="font-size:11px;color:var(--muted)"></div>
   </div>
@@ -1072,6 +1073,7 @@ var DEVTYPE_LABEL = {
   ap: '无线 AP', camera: '摄像头', printer: '打印机', pc: '终端 PC', other: '其他'
 };
 var FIELDS = ['name', 'hostname', 'mgmtIp', 'iface', 'mac', 'purpose', 'deviceType', 'note'];
+var TAG_FIELD = 'tags';   // 标签：字符串数组，空数组视为无标签（不计入 FIELDS 的空值判断）
 // 「子网」列 = 目录（网段分组）：导入时按该列建目录并归类，导出时回填目录名
 var TEMPLATE_FIELDS = ['name', 'hostname', 'mgmtIp', 'iface', 'mask', 'mac', 'purpose', 'deviceType', 'note', 'status', 'subnet'];
 var IMPORT_TARGETS = [
@@ -1084,6 +1086,7 @@ var IMPORT_TARGETS = [
   ['mac',      'MAC 地址'],
   ['purpose',  '用途'],
   ['deviceType','设备类型'],
+  ['tags',      '标签（逗号/顿号分隔）'],
   ['note',     '备注'],
   ['status',   '状态'],
   ['subnet',   '所属网段(CIDR)'],
@@ -1688,6 +1691,7 @@ var ACTIONS = {
       delete s.ips[ip];
     } else {
       merged.status = merged.status || 'assigned';
+      if (!merged.createdAt) merged.createdAt = nowIso();   // 首次登记时间
       merged.updatedAt = nowIso();
       s.ips[ip] = merged;
     }
@@ -1932,8 +1936,10 @@ Render.grid = function (s) {
     var matched = true;
     if (q) {
       matched = ip.toLowerCase().indexOf(q) >= 0 ||
-        (rec && ['name', 'hostname', 'purpose', 'note', 'mac', 'mgmtIp', 'iface'].some(function (f) {
-          return rec[f] && String(rec[f]).toLowerCase().indexOf(q) >= 0;
+        (rec && ['name', 'hostname', 'purpose', 'note', 'mac', 'mgmtIp', 'iface', 'tags'].some(function (f) {
+          var fv = rec[f];
+          if (f === 'tags' && Array.isArray(fv)) fv = fv.join(' ');
+          return fv && String(fv).toLowerCase().indexOf(q) >= 0;
         }));
     }
     if (filter && status !== filter) matched = false;
@@ -1944,7 +1950,7 @@ Render.grid = function (s) {
       if (matched && advQ) {
         if (advField === '*') {
           matched = advIp.indexOf(advQ) >= 0 ||
-            (rec && ['name', 'hostname', 'purpose', 'note', 'mac', 'mgmtIp', 'iface'].some(function (f) {
+            (rec && ['name', 'hostname', 'purpose', 'note', 'mac', 'mgmtIp', 'iface', 'tags'].some(function (f) {
               return rec[f] && String(rec[f]).toLowerCase().indexOf(advQ) >= 0;
             }));
         } else {
@@ -2040,6 +2046,7 @@ Panel.render = function () {
   $('#p-mac').value = rec.mac || '';
   $('#p-purpose').value = rec.purpose || '';
   $('#p-devtype').value = rec.deviceType || '';
+  $('#p-tags').value = Array.isArray(rec.tags) ? rec.tags.join(', ') : (rec.tags || '');
   $('#p-note').value = rec.note || '';
   $('#f-mgmt').classList.remove('invalid');
   $('#f-mask').classList.remove('invalid');
@@ -2065,6 +2072,7 @@ Panel.collect = function () {
     mac: $('#p-mac').value.trim(),
     purpose: $('#p-purpose').value.trim(),
     deviceType: $('#p-devtype').value,
+    tags: $('#p-tags').value.split(/[,，、;；]/).map(function (x) { return x.trim(); }).filter(Boolean).filter(function (x, i, a) { return a.indexOf(x) === i; }).join(', '),
     note: $('#p-note').value.trim()
   };
 };
@@ -2083,6 +2091,7 @@ Panel.applyDraft = function (draft) {
   $('#p-mac').value = draft.mac || '';
   $('#p-purpose').value = draft.purpose || '';
   $('#p-devtype').value = draft.deviceType || '';
+  $('#p-tags').value = Array.isArray(draft.tags) ? draft.tags.join(', ') : (draft.tags || '');
   $('#p-note').value = draft.note || '';
 };
 Panel.save = function () {
@@ -2952,7 +2961,7 @@ IO.download = function (blob, name) {
 
 /* ---------- 表格导出（当前网段 → 行） ---------- */
 IO.tableHeaders = function () {
-  return ['IP', '状态', '设备名称', '主机名', '管理IP', '使用接口', '掩码', 'MAC地址', '用途', '设备类型', '备注', '网段', '目录'];
+  return ['IP', '状态', '设备名称', '主机名', '管理IP', '使用接口', '掩码', 'MAC地址', '用途', '设备类型', '标签', '备注', '网段', '目录'];
 };
 IO.subnetRows = function (s) {
   var info = Calc.parseCidr(s.cidr);
@@ -2966,6 +2975,7 @@ IO.subnetRows = function (s) {
       STATUS_LABEL[rec.status] || rec.status || '',
       rec.name || '', rec.hostname || '', rec.mgmtIp || '', rec.iface || '', rec.mask || '', rec.mac || '',
       rec.purpose || '', DEVTYPE_LABEL[rec.deviceType] || rec.deviceType || '',
+      (Array.isArray(rec.tags) ? rec.tags.join('、') : (rec.tags || '')),
       rec.note || '', s.cidr, Store.groupName(s.groupId)
     ]);
   }
@@ -3955,6 +3965,11 @@ Wizard.run = function () {
       });
       rec.deviceType = hit || (DEVTYPE_LABEL[rec.deviceType] ? rec.deviceType : 'other');
     }
+    // 标签归一：分隔符拆分 + 去空去重
+    if (rec.tags) {
+      rec.tags = String(rec.tags).split(/[,，、;；]/).map(function (x) { return x.trim(); }).filter(Boolean)
+        .filter(function (x, i, a) { return a.indexOf(x) === i; }).join(', ');
+    }
     // 确定目标网段
     var cidr = st.subnetCidr || get('subnet');
     var groupName = get('subnet');
@@ -4014,7 +4029,7 @@ Wizard.run = function () {
       stats.sharedIp++;
     }
     var patch = {};
-    ['name', 'hostname', 'mgmtIp', 'iface', 'mask', 'mac', 'purpose', 'deviceType', 'note'].forEach(function (f) {
+    ['name', 'hostname', 'mgmtIp', 'iface', 'mask', 'mac', 'purpose', 'deviceType', 'note', 'tags'].forEach(function (f) {
       if (rec[f]) patch[f] = rec[f];
     });
     patch.status = rec.status || (exist ? exist.status : 'assigned');
@@ -7049,7 +7064,7 @@ function boot() {
   if (location.search.indexOf('selftest') >= 0) {
     runSelftest();
     // 自测模式下暴露内部句柄供自动化验证
-    window.__test = { Store: Store, Render: Render, Panel: Panel, IO: IO, Data: Data, Calc: Calc, Wizard: Wizard, Rules: Rules, NetBox: NetBox, Dialog: Dialog, Events: Events, SideSel: SideSel, Batch: Batch };
+    window.__test = { Store: Store, Render: Render, Panel: Panel, IO: IO, Data: Data, Calc: Calc, Wizard: Wizard, Rules: Rules, NetBox: NetBox, Dialog: Dialog, Events: Events, SideSel: SideSel, Batch: Batch, PanelExtras: PanelExtras, Audit: Audit, PngExport: PngExport };
   }
 }
 boot();
