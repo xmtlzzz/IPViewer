@@ -25,7 +25,30 @@ Implement every remaining TODO item that is not Excel-specific or IPv6, while pr
 
 | Error | Attempt | Resolution |
 |---|---:|---|
-| None | 0 | — |
+| `IO.Xlsx.write` call passed a bare rows array | 1 | Function reads `sh.rows`; switched call sites to `[{name, rows, widths}]` |
+| Huawei profile regex missed `接口IP` | 1 | Real header is uppercase; profile regexes forced case-insensitive |
+| `名称` rule captured `接口名称` | 1 | Reordered `autoMap` so `接口/端口` is tested before `名称` |
+| Merged same-IP note lost on import | 1 | Merge wrote `exist.note` before `Object.assign` overwrote it; carry the note on `rec` |
+| Soft-warning flags cleared after save | 1 | `Panel.render()` reset the classes; re-apply validation after render |
+
+## Excel Parsing & Huawei Format (2026-09-11)
+
+- [complete] Analyze the real uploaded workbook and capture authoritative cell values with openpyxl
+- [complete] Add a `mask` field plus prefix/mask conversion helpers in the Calc layer
+- [complete] Add preset table-profile detection and fix auto-map keyword precedence
+- [complete] Derive subnets from 接口IP + 掩码, inherit missing masks, merge same-IP multi-device rows
+- [complete] Add Huawei-format export (6 columns, widths, auto-filter) alongside the existing 12-column export
+- [complete] Surface 掩码 in the IP detail panel with soft validation
+- [complete] Build reusable `tools/` browser + openpyxl verification and run it against the real file
+- [complete] Synchronize README / todo / findings / progress documentation
+
+## Excel Scope Decisions
+
+- The default 12-column export is preserved; the Huawei 6-column format is an additional menu option.
+- `掩码` is stored on the record and used for subnet derivation; it is not merged into the subnet model.
+- Same-address multi-device rows are represented losslessly (merged in the grid, split again on Huawei export).
+- Date-column support remains deferred; the reference workbook has no date column.
+- The single-file, dependency-free architecture is unchanged (`tools/` scripts are development-only and never loaded by `index.html`).
 
 ## UI Polish Pass (2026-09-08)
 

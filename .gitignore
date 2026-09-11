@@ -1,2 +1,4 @@
 .wrangler/
 .delta/
+
+tools/extracted.js

@@ -44,3 +44,20 @@
 - Added dependency-preserving batch writes capped at 100 objects/about 3.5MB, transient-error retries, and object-level failure tracking.
 - Added result-page retry for failed objects and credential-free JSON/CSV failure report export.
 - Browser selftest passed `47 / 47` plus asynchronous zip; Mock NetBox bulk and retry regressions passed; Worker typecheck passed.
+
+## 2026-09-11（真实 Excel 解析与华为格式导出）
+
+- 分析用户上传的 `华为设备已配置IP统计.xlsx`：单表 `A1:F13`，列 `子网/设备名称/接口名称/接口IP/掩码/备注`，共享字符串 + 列宽 + 表头筛选；用 openpyxl 取得权威值。
+- 确认该文件原本**完全无法导入**：自动映射不识别 `接口IP`/`掩码`，IP 必选映射缺失导致向导拒绝；且 `IO.Xlsx.write` 实参形状错误使导出为空表。
+- 新增 `mask` 记录字段与 `Calc.maskToPrefix`/`prefixToMask`/`cidrFromIpMask`（支持 `24`、`/24`、`255.255.255.0`，拒绝非连续掩码）。
+- 新增 `TABLE_PROFILES` 预设格式与 `Wizard.detectProfile`：表头含 `ip/name/iface/mask` 即识别为华为格式并自动映射，弹确认框可改回手工映射。
+- 导入新增「接口IP + 掩码 → 规范化网段」推导；掩码为空的行沿用同设备最近掩码；同一 IP 多设备合并为一条并把对端设备写入备注。
+- 「子网」列作为网段名称/分组（自动创建的网段以该值命名）。
+- 新增「导出华为格式」（xlsx/csv）6 列，列宽与表头筛选对齐参考表，并把合并的同址设备还原为独立行；原 12 列导出保留。
+- 面板新增「掩码」字段（渲染/收集/草稿/软校验），修复保存后软校验标记被 `Panel.render()` 清空的问题。
+- 新增 `tools/` 可复跑验证：`extract-check.js`、`cdp-test.js`、`ui-test.js`、`verify_export.py`、`shots.js`。
+- 验证结果：内建 selftest `62/62`；真实 xlsx 端到端 `31/31`（含导出→重导入往返）；UI DOM `15/15`；openpyxl 导出校验通过；运行时异常 0。
+- 追加边界测试 `tools/edge-test.js` `13/13`，并修掉其中暴露的真实缺陷：掩码继承原为单趟且只按设备名。若「无掩码行」出现在「有掩码行」之前，或同一设备存在多种掩码（本表同时有 /24 与 /30），会把主机**静默归入错误网段**。改为全表预扫描：优先「设备+接口」精确匹配，设备级回退仅在唯一掩码时使用，否则报 badMask 交人工判断，不再猜测。
+- 按用户要求调整导出语义：**「子网」列导出留空，供人工在 Excel 维护**；新增导入模板持久化（`ipviewer.template.v1` 记住表头与列序），使**导入什么格式、导出就什么格式**；模板未覆盖的字段汇总进备注列，不丢信息。
+- 修复模板改造中自查发现的冗余：`assigned` 为隐含默认值，原会把「状态: 已分配」写进备注；已改为不输出。
+- 最终验证：内建 selftest `67/67`；真实 xlsx 端到端 `34/34`（含乱序列序模板复现与往返）；UI DOM `15/15`；边界 `17/17`；openpyxl 导出校验通过。

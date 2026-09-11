@@ -175,9 +175,13 @@
 | **P7/P8 修复验证 19 项** | **19/19** | Edge CDP（`%TEMP%\fix_test.js`，实时重写；空闲保存 5 项 / 字段保存 3 项 / 状态保持 3 项 / 网络 1 项 / CIDR 规范化 6 项 / 零异常） |
 | **P9 功能审计 5 项** | **5/5** | Edge CDP（`%TEMP%\audit_final.js`；搜索/图例筛选/叠加/持久化） |
 | **P10 新功能验证 12 项** | **12/12** | Edge CDP（`%TEMP%\p10_test.js`；CSP/右键菜单 3 项/批量 3 项/排序 3 项/越界确认/状态规则） |
-| 导出 xlsx 兼容性 | 通过 | Python openpyxl 打开验证（zip CRC 全对、中文完好、11 列结构正确） |
+| 导出 xlsx 兼容性 | 通过 | Python openpyxl 打开验证（zip CRC 全对、中文完好、列结构正确） |
+| **华为格式端到端 34 项** | **34/34** | Edge CDP（`tools/cdp-test.js`，真实 xlsx：读取→识别→导入→模板导出→往返） |
+| **UI DOM 断言 15 项** | **15/15** | Edge CDP（`tools/ui-test.js`，掩码字段/导出菜单/向导映射） |
+| **边界用例 17 项** | **17/17** | Edge CDP（`tools/edge-test.js`，掩码继承/行序/模板复现/幂等） |
+| **华为格式导出兼容性** | **通过** | openpyxl（`tools/verify_export.py`：A1:F13、列宽、autoFilter、子网留空、VRRP 还原） |
 | 运行时异常 | 0 | CDP Runtime.exceptionThrown 监听 |
-| 内建 selftest | 32/32（含异步 zip 检查） | `index.html?selftest` |
+| 内建 selftest | 67/67（含异步 zip 检查） | `index.html?selftest` |
 
 **开发期发现并修复的 bug**：
 1. `IO.Xlsx.read()` 把异步 zip 解压当同步用 → 修复为 Promise 链（`parseZip` 返回 Promise，原实现永远报"缺少 workbook.xml"）
@@ -192,11 +196,14 @@
 
 ### 高优先级（等用户输入）
 
-- [ ] **真实 Excel 验证**：用户现有登记表是 .xlsx 且列格式未定（项目约束占位）。拿到真实文件后：
-  - 走一遍导入向导，验证 Mini-XLSX 读取器兼容性（WPS/Excel 不同版本产物）
-  - 确认列映射猜测准确度，必要时调整 `Wizard.autoMap` 关键词规则
-  - 若文件列格式固定，把格式定义补进 README 与本文件
-- [ ] **日期列支持**：向导缺少计划中的「数值列为日期」勾选（Excel 日期序列 → JS 日期，1899-12-30 历元）。若用户 Excel 有登记日期列则需补上
+- [x] **真实 Excel 验证**（2026-09-11）：以真实文件「华为设备已配置IP统计.xlsx」端到端验证通过：
+  - Mini-XLSX 读取器兼容该文件（共享字符串、A1:F13、空单元格、列宽、autoFilter）
+  - 新增**预设格式自动识别**：表头含「设备名称/接口名称/接口IP/掩码」即识别为华为格式，跳过手工映射
+  - 新增 `mask` 字段与「接口IP + 掩码 → 网段」推导，该文件推导出 6 个网段
+  - 空掩码行（HSRP/VRRP 虚地址）按「同设备+同接口」继承，多掩码且无法判定时报 badMask 不猜测；同一 IP 多设备合并并记入备注
+  - 导出新增「华为格式」（含列宽与表头筛选），导出→重导入往返一致
+  - 导出**沿用导入文件的表头与列序**（模板持久化于 `ipviewer.template.v1`）；「子网」列导出留空，供人工维护
+- [ ] **日期列支持**：向导缺少计划中的「数值列为日期」勾选（Excel 日期序列 → JS 日期，1899-12-30 历元）。当前参考表无日期列，暂不需要
 
 ### 中优先级（功能缺口）
 
@@ -225,7 +232,7 @@
 | **清浏览器数据 = 丢数据** | file:// 无其他持久化手段 | README 常驻提醒；导出 JSON 为官方备份路径 |
 | /20 以下网段无格子图 | DOM 渲染上限 4096 格 | 提示改用搜索登记 |
 | 自签测试基建在 %TEMP% | `e2e_test.js`/`xlsx_test.js` 可能被系统清理 | 需要时按本文档"验证状态"重写（直连 CDP 协议，依赖 `ws`） |
-| Excel 列格式未定 | 导出列序固定为 11 列（IP/状态/设备名称/主机名/管理IP/使用接口/MAC地址/用途/设备类型/备注/网段） | 待用户补齐真实文件格式后调整 `IO.tableHeaders` |
+| Excel 列格式未定 | 导出列序现为 12 列（IP/状态/设备名称/主机名/管理IP/使用接口/掩码/MAC地址/用途/设备类型/备注/网段），另提供华为格式 6 列导出 | 已按真实「华为设备已配置IP统计.xlsx」定型，见 README |
 | **P11 实测修正** | 配额实测 **9.9MB**（非 5MB）；万条写入 14ms 无感；2 万条级别才需关注触顶 | footer 预警阈值 3MB 提前量足够；触顶时内存态保留可导出 |
 | **远期风险：全量重写** | 单 key 全量 JSON，每次 act 全量序列化；>20k 条后每次保存 >30ms，高频操作可感 | 若出现：改按网段分 key 存储 / 迁移 IndexedDB（schema 已预留版本位，migrate 链就位） |
 
@@ -245,7 +252,8 @@ index.html
    [6] Render      subnetList / grid / stats / legend / footer
    [7] Panel       open/render/collect/save/quickStatus/clear/step + applyDraft/selectedStatus
    [8] Dialog      confirm（独立 #confirm 对话框，栈式叠加）/ promptSubnet
-   [9] IO          JSON / CSV / Xlsx.read(异步!)/write / Wizard（列映射向导）
+   [9] IO          JSON / CSV / Xlsx.read(异步!)/write(widths) / Wizard（列映射 + 预设格式识别）
+   [9a] TABLE_PROFILES 预设表格格式（华为设备 IP 统计表）
    [10] Events     document 级事件委托
    [11] App        boot() + ?selftest 入口（暴露 window.__test）
 ```
@@ -256,6 +264,9 @@ index.html
 - 所有用户数据回填 DOM 必须经 `esc()`
 - Excel 读写无第三方库：读靠 `DecompressionStream('deflate-raw')` + `DOMParser`，写靠 STORE zip + 自算 CRC32
 - `IO.Xlsx.read()` 返回 **Promise**（异步解压），调用方必须 await
+- `IO.Xlsx.write([{name, rows, widths}], filename)` 接收**工作表对象数组**（旧调用 `[[rows]]` 是 bug，已修）
+- 导入时若映射了 `mask` 列，则「接口IP + 掩码」优先推导网段；掩码缺失按「同设备+同接口」继承，无法判定时报 badMask
+- 导入会在 `Wizard.run` 持久化**模板**（表头+列序），导出沿用它复现格式；「子网」等 `IO.HUMAN_COLUMNS` 列导出恒为空
 
 **回归测试方法**：
 ```bash

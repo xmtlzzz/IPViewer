@@ -760,6 +760,7 @@ footer button { border:none; background:none; color:var(--accent); font-size:12p
     <div class="fld"><label>主机名（Hostname）</label><input id="p-hostname" placeholder="如：core-sw-01"></div>
     <div class="fld" id="f-mgmt"><label>管理 IP（设备其他接口地址，可空）</label><input id="p-mgmt" placeholder="如：10.0.0.1"><div class="soft-warn">IP 格式不正确（仅提示，不影响保存）</div></div>
     <div class="fld"><label>使用接口</label><input id="p-iface" placeholder="如：Vlanif4 / Gi0/1"></div>
+    <div class="fld" id="f-mask"><label>掩码</label><input id="p-mask" list="mask-presets" placeholder="如：24（可空）"><div class="soft-warn">掩码格式不正确（支持 24 / /24 / 255.255.255.0，仅提示，不影响保存）</div></div>
     <div class="fld" id="f-mac"><label>MAC 地址</label><input id="p-mac" placeholder="如：AA-BB-CC-DD-EE-FF"><div class="soft-warn">MAC 格式不正确（仅提示，不影响保存）</div></div>
     <div class="fld"><label>用途</label><input id="p-purpose" placeholder="如：网关 / 办公位 / 监控"></div>
     <div class="fld"><label>设备类型</label>
@@ -784,6 +785,19 @@ footer button { border:none; background:none; color:var(--accent); font-size:12p
     <button class="btn danger" data-action="panel-clear">清除登记</button>
   </div>
 </aside>
+
+<datalist id="mask-presets">
+  <option value="30"></option>
+  <option value="29"></option>
+  <option value="28"></option>
+  <option value="27"></option>
+  <option value="26"></option>
+  <option value="25"></option>
+  <option value="24"></option>
+  <option value="23"></option>
+  <option value="22"></option>
+  <option value="16"></option>
+</datalist>
 
 <dialog id="dlg">
   <div class="dlg-head" id="dlg-title"></div>
@@ -855,7 +869,8 @@ var LS = {
   settings: 'ipviewer.settings.v1',
   colmap:   'ipviewer.colmap.v1',
   backup:   'ipviewer.backup.v1',
-  keywords: 'ipviewer.keywords.v1'
+  keywords: 'ipviewer.keywords.v1',
+  template: 'ipviewer.template.v1'
 };
 var RENDER_LIMIT = 4096;              // /20 —— 格子图渲染硬上限
 var STATUS_LABEL = {
@@ -868,8 +883,11 @@ var DEVTYPE_LABEL = {
   ap: '无线 AP', camera: '摄像头', printer: '打印机', pc: '终端 PC', other: '其他'
 };
 var FIELDS = ['name', 'hostname', 'mgmtIp', 'iface', 'mac', 'purpose', 'deviceType', 'note'];
+// 「子网」列语义：参考表中的短标签（如 ATD），工具无法推导，仅原样保留供人工维护
+var TEMPLATE_FIELDS = ['name', 'hostname', 'mgmtIp', 'iface', 'mask', 'mac', 'purpose', 'deviceType', 'note', 'status', 'subnet'];
 var IMPORT_TARGETS = [
   ['ip',       'IP 地址 *'],
+  ['mask',     '掩码（24 / 255.255.255.0）'],
   ['name',     '设备名称'],
   ['hostname', '主机名 / 域名'],
   ['mgmtIp',   '管理 IP'],
@@ -882,6 +900,25 @@ var IMPORT_TARGETS = [
   ['subnet',   '所属网段(CIDR)'],
   ['_ignore',  '（忽略此列）'],
   ['_note',    '（并入备注）']
+];
+// 预设表格格式（表头关键词 → 目标字段）。命中表头全部必需列即自动应用，跳过手工映射。
+var TABLE_PROFILES = [
+  {
+    id: 'huawei',
+    label: '华为设备 IP 统计表',
+    hint: '子网 / 设备名称 / 接口名称 / 接口IP / 掩码 / 备注',
+    // 表头关键词 → 目标字段（大小写不敏感；ip 为必需列）
+    headers: [
+      [/^子网$|^站点$|^区域$/, 'subnet'],
+      [/设备名称|设备名|网元/, 'name'],
+      [/接口名称|接口$|端口名称/, 'iface'],
+      [/接口\s*ip|接口地址|^ip$|^地址$/, 'ip'],
+      [/掩码|子网掩码|mask/, 'mask'],
+      [/备注|说明|note|remark/, 'note']
+    ].map(function (r) { return [new RegExp(r[0].source, 'i'), r[1]]; }),
+    // 必需列：IP / 设备名称 / 接口名称 / 掩码 —— 四者齐全才认定为该格式（子网、备注可缺）
+    required: ['ip', 'name', 'iface', 'mask']
+  }
 ];
 // 状态值归一关键词（默认规则；用户自定义规则见 Data.loadKeywords，持久化于 LS.keywords）
 var STATUS_KEYWORDS = [
@@ -986,6 +1023,44 @@ Calc.parseCidr = function (str) {
 Calc.normalizeCidr = function (str) {
   var r = Calc.parseCidr(str);
   return Calc.uintToIp(r.network) + '/' + r.pre;
+};
+/* ---------- 掩码工具（Excel「掩码」列 24 / 255.255.255.0 / /24） ---------- */
+// 掩码位数 → 点分十进制；非法位数返回 ''
+Calc.prefixToMask = function (pre) {
+  pre = Number(pre);
+  if (!isFinite(pre) || pre < 0 || pre > 32) return '';
+  var m = pre === 0 ? 0 : (0xFFFFFFFF << (32 - pre)) >>> 0;
+  return Calc.uintToIp(m);
+};
+// 掩码写法 → 位数；无法识别返回 null
+// 支持 24、/24、255.255.255.0、255.255.255.0/24
+Calc.maskToPrefix = function (input) {
+  var s = String(input == null ? '' : input).trim();
+  if (!s) return null;
+  s = s.replace(/^\/+/, '');
+  var slash = s.indexOf('/');
+  if (slash >= 0) s = s.slice(slash + 1).trim();
+  if (/^\d{1,2}$/.test(s)) {
+    var n = +s;
+    return n <= 32 ? n : null;
+  }
+  // 点分十进制：必须是连续的前导 1 掩码
+  var u = Calc.ipToUint(s);
+  if (u === null) return null;
+  var inv = (~u) >>> 0;
+  if (((inv + 1) & inv) !== 0) return null;   // 非连续掩码
+  var pre = 0, bits = u >>> 0;
+  while (bits & 0x80000000) { pre++; bits = (bits << 1) >>> 0; }
+  return pre;
+};
+// 「接口IP + 掩码」→ 规范化网段 CIDR；无法推导返回 null
+Calc.cidrFromIpMask = function (ipStr, maskInput) {
+  var u = Calc.ipToUint(String(ipStr == null ? '' : ipStr).trim().split('/')[0]);
+  if (u === null) return null;
+  var pre = Calc.maskToPrefix(maskInput);
+  if (pre === null) return null;
+  var mask = pre === 0 ? 0 : (0xFFFFFFFF << (32 - pre)) >>> 0;
+  return Calc.uintToIp((u & mask) >>> 0) + '/' + pre;
 };
 // 格子下标 → IP 字符串
 Calc.idxToIp = function (networkUint, i) {
@@ -1115,6 +1190,20 @@ Data.loadColmap = function () {
 };
 Data.saveColmap = function (cm) {
   try { localStorage.setItem(LS.colmap, JSON.stringify(cm)); } catch (e) {}
+};
+/* 导入模板：记住上次导入文件的表头与列序，导出时原样复现
+ * { headers: [...], mapping: {字段: 列下标}, source: 文件名, savedAt: iso } */
+Data.loadTemplate = function () {
+  var t = null;
+  try { t = Data._safeParse(localStorage.getItem(LS.template)); } catch (e) {}
+  if (!t || !Array.isArray(t.headers) || !t.headers.length || !t.mapping) return null;
+  return t;
+};
+Data.saveTemplate = function (t) {
+  try { localStorage.setItem(LS.template, JSON.stringify(t)); } catch (e) {}
+};
+Data.clearTemplate = function () {
+  try { localStorage.removeItem(LS.template); } catch (e) {}
 };
 // 状态关键词规则：读取生效规则（用户自定义优先），保存规则
 Data.loadKeywords = function () {
@@ -1503,11 +1592,13 @@ Panel.render = function () {
   $('#p-hostname').value = rec.hostname || '';
   $('#p-mgmt').value = rec.mgmtIp || '';
   $('#p-iface').value = rec.iface || '';
+  $('#p-mask').value = rec.mask || '';
   $('#p-mac').value = rec.mac || '';
   $('#p-purpose').value = rec.purpose || '';
   $('#p-devtype').value = rec.deviceType || '';
   $('#p-note').value = rec.note || '';
   $('#f-mgmt').classList.remove('invalid');
+  $('#f-mask').classList.remove('invalid');
   $('#f-mac').classList.remove('invalid');
 
   panel.classList.add('open'); mask.classList.add('open');
@@ -1518,6 +1609,7 @@ Panel.collect = function () {
     hostname: $('#p-hostname').value.trim(),
     mgmtIp: $('#p-mgmt').value.trim(),
     iface: $('#p-iface').value.trim(),
+    mask: $('#p-mask').value.trim(),
     mac: $('#p-mac').value.trim(),
     purpose: $('#p-purpose').value.trim(),
     deviceType: $('#p-devtype').value,
@@ -1535,6 +1627,7 @@ Panel.applyDraft = function (draft) {
   $('#p-hostname').value = draft.hostname || '';
   $('#p-mgmt').value = draft.mgmtIp || '';
   $('#p-iface').value = draft.iface || '';
+  $('#p-mask').value = draft.mask || '';
   $('#p-mac').value = draft.mac || '';
   $('#p-purpose').value = draft.purpose || '';
   $('#p-devtype').value = draft.deviceType || '';
@@ -1546,9 +1639,10 @@ Panel.save = function () {
   if (!s || !cur.ip) return;
   var patch = Panel.collect();
   var rec = s.ips[cur.ip] || {};
-  // 软校验
-  $('#f-mgmt').classList.toggle('invalid', !!(patch.mgmtIp && !Calc.ipToUint(patch.mgmtIp)));
-  $('#f-mac').classList.toggle('invalid', !!(patch.mac && !/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(patch.mac)));
+  // 软校验（仅提示，不阻断保存）
+  var mgmtBad = !!(patch.mgmtIp && !Calc.ipToUint(patch.mgmtIp));
+  var maskBad = !!(patch.mask && Calc.maskToPrefix(patch.mask) === null);
+  var macBad = !!(patch.mac && !/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(patch.mac));
   var hasContent = FIELDS.some(function (f) { return patch[f]; });
   var selected = Panel.selectedStatus();
   if (!hasContent && !rec.status && selected === 'free') {
@@ -1570,6 +1664,10 @@ Panel.save = function () {
   }
   Store.act('ip-set', s.id, cur.ip, patch);
   Panel.render();
+  // render 会清空软校验标记，保存后按本次输入重新标记
+  $('#f-mgmt').classList.toggle('invalid', mgmtBad);
+  $('#f-mask').classList.toggle('invalid', maskBad);
+  $('#f-mac').classList.toggle('invalid', macBad);
   toast(cur.ip + ' 已保存');
 };
 Panel.quickStatus = function (st) {
@@ -1875,7 +1973,7 @@ IO.download = function (blob, name) {
 
 /* ---------- 表格导出（当前网段 → 行） ---------- */
 IO.tableHeaders = function () {
-  return ['IP', '状态', '设备名称', '主机名', '管理IP', '使用接口', 'MAC地址', '用途', '设备类型', '备注', '网段'];
+  return ['IP', '状态', '设备名称', '主机名', '管理IP', '使用接口', '掩码', 'MAC地址', '用途', '设备类型', '备注', '网段'];
 };
 IO.subnetRows = function (s) {
   var info = Calc.parseCidr(s.cidr);
@@ -1887,7 +1985,7 @@ IO.subnetRows = function (s) {
     rows.push([
       ip,
       STATUS_LABEL[rec.status] || rec.status || '',
-      rec.name || '', rec.hostname || '', rec.mgmtIp || '', rec.iface || '', rec.mac || '',
+      rec.name || '', rec.hostname || '', rec.mgmtIp || '', rec.iface || '', rec.mask || '', rec.mac || '',
       rec.purpose || '', DEVTYPE_LABEL[rec.deviceType] || rec.deviceType || '',
       rec.note || '', s.cidr
     ]);
@@ -1901,13 +1999,160 @@ IO.allRows = function () {
   });
   return rows;
 };
+/* ---------- 华为设备 IP 统计表格式（子网 / 设备名称 / 接口名称 / 接口IP / 掩码 / 备注） ---------- */
+IO.huaweiHeaders = function () {
+  return ['子网', '设备名称', '接口名称', '接口IP', '掩码', '备注'];
+};
+IO.HUAWEI_WIDTHS = [15.33, 46.07, 22.8, 23.13, 9.73, 13];
+// 无法由工具推导、留给人工在 Excel 里维护的列（导出时始终为空）
+IO.HUMAN_COLUMNS = ['subnet'];
+// 记录字段 → 单元格文本（状态/设备类型按表头习惯输出中文）
+IO.fieldCell = function (rec, ip, field, isSiblingFirst) {
+  switch (field) {
+    case 'ip': return ip;
+    case 'subnet': return '';                 // 人工维护列，留空
+    case 'status': return STATUS_LABEL[rec.status] || rec.status || '';
+    case 'deviceType': return DEVTYPE_LABEL[rec.deviceType] || rec.deviceType || '';
+    default: return rec[field] || '';
+  }
+};
+// 记录 → 华为 6 列；非空但无对应列的字段并入备注，避免导出丢信息
+IO.huaweiRow = function (s, ip, rec) {
+  var mask = rec.mask || '';
+  if (!mask) {
+    try { mask = String(Calc.parseCidr(s.cidr).pre); } catch (e) { mask = ''; }
+  }
+  var note = IO.huaweiNote(rec);
+  return [
+    '', rec.name || '', rec.iface || '', ip, mask, note   // 子网列留空，人工维护
+  ];
+};
+// 把没有独立列的字段汇总进备注
+IO.FIELD_LABEL = {
+  name: '设备名称', hostname: '主机名', mgmtIp: '管理IP', iface: '接口名称', mask: '掩码',
+  mac: 'MAC', purpose: '用途', deviceType: '设备类型', status: '状态', note: '备注'
+};
+// 某字段是否有需要写入备注的信息（assigned 是隐含默认值，不写）
+IO.fieldHasExtra = function (rec, field) {
+  if (!rec) return false;
+  if (field === 'status') return !!rec.status && rec.status !== 'assigned';
+  if (field === 'deviceType') return !!rec.deviceType;
+  return !!rec[field];
+};
+IO.fieldExtraText = function (rec, field) {
+  if (field === 'deviceType') return '设备类型: ' + IO.fieldCell(rec, '', field);
+  if (field === 'status') return '状态: ' + IO.fieldCell(rec, '', field);
+  return (IO.FIELD_LABEL[field] || field) + ': ' + (rec[field] || '');
+};
+IO.huaweiNote = function (rec) {
+  var extras = ['hostname', 'mgmtIp', 'mac', 'purpose', 'deviceType', 'status']
+    .filter(function (f) { return IO.fieldHasExtra(rec, f); })
+    .map(function (f) { return IO.fieldExtraText(rec, f); });
+  var note = rec.note || '';
+  if (extras.length) note = note ? note + '；' + extras.join('；') : extras.join('；');
+  return note;
+};
+/* 依导入模板复现表头与列序：导入什么格式，导出就是什么格式。
+ * 未在模板中的非空字段并入备注列（若有），避免改列序导致丢信息。 */
+IO.templateColumns = function () {
+  var tpl = Data.loadTemplate();
+  if (!tpl) return null;
+  var rev = {};                                  // 列下标 → 字段名
+  Object.keys(tpl.mapping).forEach(function (f) {
+    var i = tpl.mapping[f];
+    if (i == null) return;
+    rev[i] = f;
+  });
+  var cols = [];
+  for (var i = 0; i < tpl.headers.length; i++) cols.push({ index: i, field: rev[i] || null });
+  return { headers: tpl.headers.slice(), cols: cols, source: tpl.source || '' };
+};
+IO.huaweiTemplateRow = function (view, s, ip, rec) {
+  var cells = [];
+  var used = {};
+  view.cols.forEach(function (c) {
+    if (!c.field) { cells.push(''); return; }
+    used[c.field] = true;
+    cells.push(IO.fieldCell(rec, ip, c.field));
+  });
+  // 模板未覆盖的非空字段 → 并入备注列（找不到备注列则忽略该字段的独立列位）
+  var unmapped = TEMPLATE_FIELDS.filter(function (f) {
+    if (used[f] || IO.HUMAN_COLUMNS.indexOf(f) >= 0 || f === 'ip') return false;
+    return IO.fieldHasExtra(rec, f);
+  });
+  if (unmapped.length) {
+    var extraText = unmapped.map(function (f) { return IO.fieldExtraText(rec, f); }).join('；');
+    var noteIdx = -1;
+    view.cols.forEach(function (c, i) { if (c.field === 'note') noteIdx = i; });
+    if (noteIdx >= 0) {
+      cells[noteIdx] = cells[noteIdx] ? cells[noteIdx] + '；' + extraText : extraText;
+    }
+  }
+  return cells;
+};
+// 导出用视图：有导入模板则复现其表头列序，否则用内置华为 6 列
+IO.huaweiView = function () {
+  var tpl = IO.templateColumns();
+  if (tpl && tpl.cols.some(function (c) { return c.field; })) {
+    return { headers: tpl.headers, custom: true, view: tpl };
+  }
+  return { headers: IO.huaweiHeaders(), custom: false, view: null };
+};
+// 同一 IP 上有多台设备（HSRP/VRRP 虚地址）时，为每台设备各出一行，保持参考表形态
+IO.huaweiRows = function (view) {
+  view = view || IO.huaweiView();
+  var rows = [];
+  var build = function (s, ip, rec) {
+    return view.custom ? IO.huaweiTemplateRow(view.view, s, ip, rec) : IO.huaweiRow(s, ip, rec);
+  };
+  Store.state.data.subnets.forEach(function (s) {
+    var info;
+    try { info = Calc.parseCidr(s.cidr); } catch (e) { return; }
+    var ips = Object.keys(s.ips).sort(function (a, b) {
+      return (Calc.ipToUint(a) >>> 0) - (Calc.ipToUint(b) >>> 0);
+    });
+    ips.forEach(function (ip) {
+      if (Calc.idxOfIp(ip, info.network, info.broadcast) < 0) return;
+      var rec = s.ips[ip];
+      var sibs = [];
+      var clean = String(rec.note || '');
+      var extra = /(?:^|；)同址设备:\s*([^；]+)/g, m;
+      while ((m = extra.exec(rec.note || '')) !== null) sibs.push(m[1].trim());
+      if (sibs.length) {
+        clean = clean.replace(/；?同址设备:\s*[^；]+/g, '').replace(/^；+|；+$/g, '');
+        rec = Object.assign({}, rec, { note: clean });
+      }
+      rows.push(build(s, ip, rec));
+      // 备注里记录的「同址设备: X」按参考表习惯还原成独立行
+      sibs.forEach(function (name) {
+        rows.push(build(s, ip, Object.assign({}, rec, { name: name })));
+      });
+    });
+  });
+  return rows;
+};
+IO.exportHuawei = function (fmt) {
+  var view = IO.huaweiView();
+  var headers = view.headers;
+  var rows = IO.huaweiRows(view);
+  if (!rows.length) { toast('没有登记记录可导出', { err: true }); return; }
+  var name = 'ip-huawei-' + IO.dateStamp();
+  if (fmt === 'xlsx') {
+    var widths = view.custom ? IO.HUAWEI_WIDTHS.slice(0, headers.length) : IO.HUAWEI_WIDTHS;
+    IO.Xlsx.write([{ name: '设备IP地址统计', rows: [headers].concat(rows), widths: widths }], name + '.xlsx');
+    toast('已导出表格（' + rows.length + ' 行）' + (view.custom ? '，列格式沿用导入模板：' + headers.join(' / ') : ''));
+  } else {
+    IO.download(new Blob(['﻿' + IO.csvEncode([headers].concat(rows))], { type: 'text/csv' }), name + '.csv');
+    toast('已导出 CSV（' + rows.length + ' 行）');
+  }
+};
 IO.exportTable = function (fmt) {
   var headers = IO.tableHeaders();
   var rows = IO.allRows();
   if (!rows.length) { toast('没有登记记录可导出', { err: true }); return; }
   var name = 'ip-registry-' + IO.dateStamp();
   if (fmt === 'xlsx') {
-    IO.Xlsx.write([[headers].concat(rows)], name + '.xlsx');
+    IO.Xlsx.write([{ name: 'IP登记表', rows: [headers].concat(rows) }], name + '.xlsx');
     toast('已导出 xlsx（' + rows.length + ' 行）');
   } else {
     IO.download(new Blob(['﻿' + IO.csvEncode([headers].concat(rows))], { type: 'text/csv' }), name + '.csv');
@@ -2113,7 +2358,7 @@ IO.Xlsx.crc32 = function (u8) {
   return (c ^ 0xFFFFFFFF) >>> 0;
 };
 IO.Xlsx.write = function (sheetsArr, filename) {
-  // sheetsArr: [{name, rows}] → 最小合法 xlsx（inline string，STORE zip）
+  // sheetsArr: [{name, rows, widths?}] → 最小合法 xlsx（inline string，STORE zip）
   var files = [];
   var contentTypes = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
@@ -2123,7 +2368,7 @@ IO.Xlsx.write = function (sheetsArr, filename) {
   var wbSheets = '', rels = '';
   sheetsArr.forEach(function (sh, i) {
     var id = i + 1;
-    files.push(['xl/worksheets/sheet' + id + '.xml', IO.Xlsx.sheetXml(sh.rows)]);
+    files.push(['xl/worksheets/sheet' + id + '.xml', IO.Xlsx.sheetXml(sh.rows, sh.widths)]);
     contentTypes.push('<Override PartName="/xl/worksheets/sheet' + id + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>');
     wbSheets += '<sheet name="' + IO.Xlsx.xesc(sh.name || ('Sheet' + id)) + '" sheetId="' + id + '" r:id="rId' + id + '"/>';
     rels += '<Relationship Id="rId' + id + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + id + '.xml"/>';
@@ -2141,9 +2386,18 @@ IO.Xlsx.write = function (sheetsArr, filename) {
 IO.Xlsx.xesc = function (s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 };
-IO.Xlsx.sheetXml = function (rows) {
+IO.Xlsx.sheetXml = function (rows, widths) {
   var xml = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'];
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'];
+  // 列宽（可选）：Excel 列宽单位
+  if (widths && widths.length) {
+    xml.push('<cols>');
+    widths.forEach(function (w, i) {
+      xml.push('<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + (Number(w) || 10) + '" customWidth="1"/>');
+    });
+    xml.push('</cols>');
+  }
+  xml.push('<sheetData>');
   rows.forEach(function (row, r) {
     xml.push('<row r="' + (r + 1) + '">');
     row.forEach(function (cell, c) {
@@ -2157,7 +2411,12 @@ IO.Xlsx.sheetXml = function (rows) {
     });
     xml.push('</row>');
   });
-  xml.push('</sheetData></worksheet>');
+  xml.push('</sheetData>');
+  // 表头自动筛选（与参考表一致）
+  if (rows.length && rows[0] && rows[0].length) {
+    xml.push('<autoFilter ref="A1:' + IO.Xlsx.idxToCol(rows[0].length - 1) + '1"/>');
+  }
+  xml.push('</worksheet>');
   return xml.join('');
 };
 IO.Xlsx.idxToCol = function (n) {
@@ -2294,29 +2553,52 @@ Wizard.autoMap = function (headers) {
   var guess = {};
   var rules = [
     [/^ip$|ip地址|^地址$|ip addr/i, 'ip'],
-    [/主机名|hostname|域名|domain/i, 'hostname'],
-    [/设备名|名称|name|设备/i, 'name'],
-    [/管理ip|管理|mgmt|管理地址/i, 'mgmtIp'],
+    [/接口\s*ip|接口地址/i, 'ip'],
+    [/掩码|子网掩码|netmask|^mask$/i, 'mask'],
     [/接口|port|iface|interface/i, 'iface'],
+    [/主机名|hostname|域名|domain/i, 'hostname'],
+    [/管理ip|管理|mgmt|管理地址/i, 'mgmtIp'],
+    [/设备名|名称|name|设备|网元/i, 'name'],
     [/mac|物理地址/i, 'mac'],
     [/用途|目的|用途说明|purpose|描述/i, 'purpose'],
     [/类型|设备类型|type|device/i, 'deviceType'],
     [/备注|说明|note|remark|comment/i, 'note'],
     [/状态|status/i, 'status'],
-    [/网段|cidr|subnet|vlan/i, 'subnet']
+    [/^子网$|^站点$|^区域$|网段|cidr|subnet|vlan/i, 'subnet']
   ];
   headers.forEach(function (h, i) {
     if (!h) return;
     for (var r = 0; r < rules.length; r++) {
       if (rules[r][0].test(String(h).trim())) {
-        if (!(rules[r][1] in guess) && rules[r][1] !== 'ip' || !(rules[r][1] in guess)) {
-          guess[rules[r][1]] = i;
-        }
+        if (!(rules[r][1] in guess)) guess[rules[r][1]] = i;
         break;
       }
     }
   });
   return guess;
+};
+// 预设表格格式识别：必需列全部命中即返回该 profile
+Wizard.detectProfile = function (headers) {
+  for (var p = 0; p < TABLE_PROFILES.length; p++) {
+    var prof = TABLE_PROFILES[p];
+    var mapping = {}, matched = 0;
+    for (var h = 0; h < headers.length; h++) {
+      var head = String(headers[h] || '').trim();
+      if (!head) continue;
+      for (var r = 0; r < prof.headers.length; r++) {
+        if (prof.headers[r][0].test(head)) {
+          matched++;
+          if (!(prof.headers[r][1] in mapping)) mapping[prof.headers[r][1]] = h;
+          break;
+        }
+      }
+    }
+    if (!prof.required.every(function (k) { return mapping[k] != null; })) continue;
+    // 防误判：除必需列外，至少还需命中一列（如 掩码/设备名称）
+    if (matched < prof.required.length + 1) continue;
+    return { profile: prof, mapping: mapping };
+  }
+  return null;
 };
 Wizard.stepMap = function () {
   Wizard.renderSteps(Wizard.state.sheets.length > 1 ? 1 : 0);
@@ -2333,11 +2615,36 @@ Wizard.stepMap = function () {
   var cm = Data.loadColmap();
   if (cm && JSON.stringify(cm.headers) === JSON.stringify(headers) && cm.mapping && cm.mapping.ip != null) {
     st.mapping = Object.assign({}, cm.mapping);
+    st.profile = null;
     Wizard.confirmAuto();
     return;
   }
+  // 预设格式识别（如华为设备 IP 统计表）：ip + 掩码 齐全即自动套用
+  var hit = Wizard.detectProfile(headers);
+  if (hit) {
+    st.mapping = Object.assign({}, hit.mapping);
+    st.profile = hit.profile;
+    Wizard.confirmProfile();
+    return;
+  }
+  st.profile = null;
   st.mapping = Wizard.autoMap(headers);
   Wizard.renderMapUI();
+};
+Wizard.confirmProfile = function () {
+  var st = Wizard.state;
+  var prof = st.profile;
+  var pairs = Object.keys(st.mapping).map(function (k) {
+    var t = IMPORT_TARGETS.filter(function (x) { return x[0] === k; })[0];
+    return esc((t ? t[1] : k).replace(/\s*\*$/, '')) + ' → ' + esc(st.headers[st.mapping[k]]);
+  }).join('<br>');
+  Dialog.confirm('检测到「' + esc(prof.label) + '」格式',
+    '表头与预设格式 <b>' + esc(prof.hint) + '</b> 匹配，已自动映射：'
+    + '<div class="dialog-hint">' + pairs + '</div>'
+    + '<div class="dialog-hint">「接口IP + 掩码」将自动推导所属网段。</div>',
+    function () { Wizard.stepMerge(); }, '按此导入', '重新映射', function () {
+      Wizard.renderMapUI();
+    });
 };
 Wizard.confirmAuto = function () {
   var st = Wizard.state;
@@ -2497,7 +2804,9 @@ Wizard.stepMerge = function () {
     + '<option value="merge"' + (st.merge === 'merge' ? ' selected' : '') + '>合并（导入的非空字段覆盖现有登记）</option>'
     + '<option value="skip"' + (st.merge === 'skip' ? ' selected' : '') + '>跳过已登记 IP</option>'
     + '</select></div>'
-    + '<div class="hint">即将导入 <b>' + st.dataRows.length + '</b> 行到' + (st.subnetCidr ? '网段 <b>' + esc(st.subnetCidr) + '</b>' : '各「所属网段」列对应网段') + '。</div>';
+    + '<div class="hint">即将导入 <b>' + st.dataRows.length + '</b> 行到' + (st.subnetCidr ? '网段 <b>' + esc(st.subnetCidr) + '</b>' : (st.mapping && st.mapping.mask != null ? '按「接口IP + 掩码」推导出的各网段' : '各「所属网段」列对应网段')) + '。</div>'
+    + '<div class="hint">导出将沿用本次列格式：<b>' + esc((st.headers || []).join(' / ')) + '</b>'
+    + '（「子网」等无法推导的列保持为空，供人工维护）</div>';
   var foot = $('#w-foot');
   foot.innerHTML = '';
   var back = document.createElement('button');
@@ -2513,8 +2822,46 @@ Wizard.run = function () {
   st.merge = $('#w-merge') ? $('#w-merge').value : 'merge';
   var m = st.mapping;
   var kw = Data.loadKeywords();
-  var stats = { added: 0, updated: 0, skipped: 0, outOfRange: [], newSubnets: 0, badIp: 0 };
+  var stats = { added: 0, updated: 0, skipped: 0, rows: 0, sharedIp: 0, outOfRange: [], newSubnets: 0, badIp: 0, badMask: 0, inheritedMask: 0 };
   Data.backupCurrent();
+  // 记录导入模板（预设格式与手工映射两条路径都经过这里）：导出时原样复现表头与列序
+  Data.saveTemplate({
+    headers: st.headers.slice(),
+    mapping: Object.assign({}, m),
+    source: (st.sheets[st.sheetIdx] || {}).name || '',
+    savedAt: nowIso()
+  });
+
+  // 掩码列 + 接口IP 反推网段时的候选池
+  st.derivedCidrs = [];
+  st.maskByDevice = {};
+  st.maskByIface = {};
+  var derivedSeen = {};
+  var rowGet = function (row, key) {
+    var i = m[key];
+    return i == null ? '' : String(row[i] == null ? '' : row[i]).trim();
+  };
+  // 预扫描：先收集全表掩码（掩码行可能出现在无掩码行之后，单趟扫描会漏）
+  // 同设备+同接口 → 精确掩码；同设备仅一种掩码 → 设备级回退；多种掩码则不猜
+  var deviceMaskSets = {};
+  st.dataRows.forEach(function (row) {
+    var mv = rowGet(row, 'mask');
+    if (!mv || Calc.maskToPrefix(mv) === null) return;
+    var d = rowGet(row, 'name'), f = rowGet(row, 'iface');
+    if (!d) return;
+    st.maskByIface[d + '\u0000' + f] = mv;
+    (deviceMaskSets[d] = deviceMaskSets[d] || {})[mv] = true;
+  });
+  Object.keys(deviceMaskSets).forEach(function (d) {
+    var keys = Object.keys(deviceMaskSets[d]);
+    if (keys.length === 1) st.maskByDevice[d] = keys[0];   // 唯一致值才作设备级回退
+  });
+  var findSubnet = function (cidr) {
+    for (var i = 0; i < Store.state.data.subnets.length; i++) {
+      if (Store.state.data.subnets[i].cidr === cidr) return Store.state.data.subnets[i];
+    }
+    return null;
+  };
 
   st.dataRows.forEach(function (row) {
     var get = function (key) {
@@ -2523,7 +2870,7 @@ Wizard.run = function () {
     };
     var ipStr = get('ip');
     if (!ipStr) { stats.badIp++; return; }
-    var rec = { name: get('name'), hostname: get('hostname'), mgmtIp: get('mgmtIp'), iface: get('iface'), mac: get('mac'), purpose: get('purpose'), deviceType: get('deviceType'), note: get('note'), status: get('status') };
+    var rec = { name: get('name'), hostname: get('hostname'), mgmtIp: get('mgmtIp'), iface: get('iface'), mask: get('mask'), mac: get('mac'), purpose: get('purpose'), deviceType: get('deviceType'), note: get('note'), status: get('status') };
     // 「并入备注」列：以「表头: 值」拼接进 note
     if (st.noteCols && st.noteCols.length) {
       var extra = st.noteCols.map(function (ci) {
@@ -2557,11 +2904,28 @@ Wizard.run = function () {
     }
     // 确定目标网段
     var cidr = st.subnetCidr || get('subnet');
-    if (!cidr) { stats.outOfRange.push(ipStr + '（未指定网段）'); return; }
-    var subnet = null;
-    for (var i = 0; i < Store.state.data.subnets.length; i++) {
-      if (Store.state.data.subnets[i].cidr === cidr) { subnet = Store.state.data.subnets[i]; break; }
+    var groupName = get('subnet');
+    var huaweiMode = false;
+    // 「接口IP + 掩码」→ 规范化网段（华为设备 IP 统计表；掩码列存在时优先于「子网」标签列）
+    if (m.mask != null && !st.subnetCidr) {
+      var maskVal = rec.mask;
+      var devName = get('name'), devIface = get('iface');
+      // 掩码缺失时（如 VRRP 虚地址行）沿用掩码：优先同设备+同接口，其次同设备
+      if (!maskVal && devName) {
+        maskVal = st.maskByIface[devName + '\u0000' + devIface] || st.maskByDevice[devName] || '';
+        if (maskVal) { rec.mask = maskVal; stats.inheritedMask++; }
+      }
+      var derived = Calc.cidrFromIpMask(ipStr, maskVal);
+      if (derived) {
+        cidr = derived;
+        huaweiMode = true;
+        if (!derivedSeen[derived]) { derivedSeen[derived] = true; st.derivedCidrs.push({ cidr: derived, name: groupName }); }
+      } else {
+        stats.badMask++;
+      }
     }
+    if (!cidr) { stats.outOfRange.push(ipStr + '（未指定网段）'); return; }
+    var subnet = findSubnet(cidr);
     if (!subnet) {
       try {
         var norm = Calc.normalizeCidr(cidr);
@@ -2573,6 +2937,8 @@ Wizard.run = function () {
         return;
       }
     }
+    // 「子网」列作为网段名称/分组：自动创建的网段用该值命名（名称仍是 CIDR 说明除外）
+    if (huaweiMode && groupName && subnet.name === subnet.cidr) subnet.name = groupName;
     var info;
     try { info = Calc.parseCidr(subnet.cidr); } catch (e) { stats.outOfRange.push(ipStr); return; }
     // IP 可能带掩码（192.168.1.5/24）
@@ -2583,8 +2949,17 @@ Wizard.run = function () {
     }
     var exist = subnet.ips[ipStr];
     if (exist && st.merge === 'skip') { stats.skipped++; return; }
+    // 同一 IP 多行（如两台设备的 VRRP 虚地址同址）：不覆盖已有设备名，改为并入备注
+    if (exist && rec.name && exist.name && exist.name !== rec.name) {
+      var other = '同址设备: ' + rec.name;
+      var noteBase = rec.note || exist.note || '';
+      if (noteBase.indexOf(other) < 0) noteBase = noteBase ? noteBase + '；' + other : other;
+      rec.note = noteBase;          // 写入 rec 以便随 patch 落库
+      delete rec.name;
+      stats.sharedIp++;
+    }
     var patch = {};
-    ['name', 'hostname', 'mgmtIp', 'iface', 'mac', 'purpose', 'deviceType', 'note'].forEach(function (f) {
+    ['name', 'hostname', 'mgmtIp', 'iface', 'mask', 'mac', 'purpose', 'deviceType', 'note'].forEach(function (f) {
       if (rec[f]) patch[f] = rec[f];
     });
     patch.status = rec.status || (exist ? exist.status : 'assigned');
@@ -2595,22 +2970,30 @@ Wizard.run = function () {
       subnet.ips[ipStr] = merged;
       if (exist) stats.updated++; else stats.added++;
     }
+    stats.rows++;
   });
 
   Store.persist();
   Store.emit();
   $('#wiz').close();
-  var msg = '导入完成：新增 ' + stats.added + '，更新 ' + stats.updated
-    + (stats.skipped ? '，跳过 ' + stats.skipped : '')
+  var msg = '导入完成：' + stats.rows + ' 行记录（新增 ' + stats.added + '，更新 ' + stats.updated
+    + (stats.skipped ? '，跳过 ' + stats.skipped : '') + '）'
     + (stats.newSubnets ? '，新建网段 ' + stats.newSubnets : '')
     + (stats.badIp ? '，无效行 ' + stats.badIp : '');
+  if (stats.sharedIp) msg += '，同址 HSRP/VRRP ' + stats.sharedIp + ' 行已合并并记入备注';
+  if (stats.badMask) msg += '，掩码缺失/无效 ' + stats.badMask + ' 条';
+  if (stats.inheritedMask) msg += '，沿用同设备掩码 ' + stats.inheritedMask + ' 条';
+  if (st.derivedCidrs && st.derivedCidrs.length) {
+    msg += '，由掩码推导网段 ' + st.derivedCidrs.length + ' 个';
+  }
   if (stats.outOfRange.length) {
     msg += '，越界/异常 ' + stats.outOfRange.length + ' 条';
   }
   toast(msg, { err: stats.outOfRange.length > 0, ms: 6000 });
   // 明细报告：越界/异常行可查看并复制
-  if (stats.outOfRange.length || stats.badIp) {
+  if (stats.outOfRange.length || stats.badIp || stats.badMask) {
     var lines = stats.outOfRange.slice();
+    if (stats.badMask) lines.push('（另有 ' + stats.badMask + ' 行「掩码」列无法识别，已回退到「子网」列/指定网段处理）');
     if (stats.badIp) lines.push('（另有 ' + stats.badIp + ' 行 IP 列为空，已忽略）');
     var detail = lines.join('\n');
     Dialog.confirm('导入明细：' + lines.length + ' 条未导入',
@@ -4148,6 +4531,11 @@ Events.exportTableMenu = function (ev) {
   };
   mk('导出为 Excel (.xlsx)', function () { IO.exportTable('xlsx'); });
   mk('导出为 CSV (.csv)', function () { IO.exportTable('csv'); });
+  var tpl = Data.loadTemplate();
+  var tplLabel = tpl && tpl.headers && tpl.headers.length
+    ? '导出登记表 Excel (.xlsx) —— 沿用导入格式' : '导出华为格式 Excel (.xlsx)';
+  mk(tplLabel, function () { IO.exportHuawei('xlsx'); });
+  mk('导出华为格式 CSV (.csv)', function () { IO.exportHuawei('csv'); });
   document.body.appendChild(m);
   var r = ev.target.getBoundingClientRect();
   m.style.left = Math.min(r.left, window.innerWidth - 180) + 'px';
@@ -4231,6 +4619,159 @@ function runSelftest() {
     eq(Calc.idxOfIp('192.168.11.5', net, bc), -1);
   });
   t('normalizeCidr', function () { eq(Calc.normalizeCidr('192.168.10.77/24'), '192.168.10.0/24'); });
+  /* ---------- 掩码工具（华为表格：掩码列 + 接口IP 推导网段） ---------- */
+  t('prefixToMask 边界', function () {
+    eq(Calc.prefixToMask(0), '0.0.0.0');
+    eq(Calc.prefixToMask(24), '255.255.255.0');
+    eq(Calc.prefixToMask(30), '255.255.255.252');
+    eq(Calc.prefixToMask(32), '255.255.255.255');
+    eq(Calc.prefixToMask(33), '');
+  });
+  t('maskToPrefix 位数写法', function () {
+    eq(Calc.maskToPrefix('24'), 24);
+    eq(Calc.maskToPrefix('/24'), 24);
+    eq(Calc.maskToPrefix(' 30 '), 30);
+    eq(Calc.maskToPrefix('0'), 0);
+    eq(Calc.maskToPrefix('33'), null);
+  });
+  t('maskToPrefix 点分十进制写法', function () {
+    eq(Calc.maskToPrefix('255.255.255.0'), 24);
+    eq(Calc.maskToPrefix('255.255.255.252'), 30);
+    eq(Calc.maskToPrefix('255.255.255.255'), 32);
+    eq(Calc.maskToPrefix('255.255.255.0/24'), 24);
+  });
+  t('maskToPrefix 拒绝非连续掩码与垃圾值', function () {
+    eq(Calc.maskToPrefix('255.0.255.0'), null);
+    eq(Calc.maskToPrefix('255.255.0.255'), null);
+    eq(Calc.maskToPrefix('abc'), null);
+    eq(Calc.maskToPrefix(''), null);
+    eq(Calc.maskToPrefix(null), null);
+  });
+  t('cidrFromIpMask 华为样例推导', function () {
+    eq(Calc.cidrFromIpMask('192.168.156.9', '24'), '192.168.156.0/24');
+    eq(Calc.cidrFromIpMask('192.168.249.145', '30'), '192.168.249.144/30');
+    eq(Calc.cidrFromIpMask('1.1.1.1', '30'), '1.1.1.0/30');
+    eq(Calc.cidrFromIpMask('192.168.1.1', '255.255.255.0'), '192.168.1.0/24');
+  });
+  t('cidrFromIpMask 带前缀与非法输入', function () {
+    eq(Calc.cidrFromIpMask('10.0.0.5/24', '24'), '10.0.0.0/24');
+    eq(Calc.cidrFromIpMask('10.0.0.5', ''), null);
+    eq(Calc.cidrFromIpMask('999.1.1.1', '24'), null);
+    eq(Calc.cidrFromIpMask('10.0.0.5', 'k8'), null);
+  });
+  /* ---------- 华为预设格式识别 ---------- */
+  t('华为表头格式识别', function () {
+    var hit = Wizard.detectProfile(['子网', '设备名称', '接口名称', '接口IP', '掩码', '备注']);
+    eq(!!hit, true);
+    eq(hit.profile.id, 'huawei');
+    eq(hit.mapping.ip, 3);
+    eq(hit.mapping.mask, 4);
+    eq(hit.mapping.subnet, 0);
+    eq(hit.mapping.name, 1);
+    eq(hit.mapping.iface, 2);
+    eq(hit.mapping.note, 5);
+  });
+  t('非华为表不误判预设格式', function () {
+    eq(Wizard.detectProfile(['IP', '设备名称', 'MAC地址']), null);
+    eq(Wizard.detectProfile(['IP', '状态', '备注']), null);
+  });
+  t('接口IP/掩码表头自动映射（无预设时）', function () {
+    var m = Wizard.autoMap(['子网', '设备名称', '接口名称', '接口IP', '掩码', '备注']);
+    eq(m.ip, 3);
+    eq(m.mask, 4);
+    eq(m.iface, 2);
+  });
+  t('导出包含掩码列', function () { eq(IO.tableHeaders().indexOf('掩码') >= 0, true); });
+  t('华为导出表头与列数', function () {
+    eq(JSON.stringify(IO.huaweiHeaders()), JSON.stringify(['子网', '设备名称', '接口名称', '接口IP', '掩码', '备注']));
+    eq(IO.HUAWEI_WIDTHS.length, IO.huaweiHeaders().length);
+  });
+  t('华为导出行：掩码优先用记录值，缺失时回退网段前缀', function () {
+    var row = IO.huaweiRow({ name: 'ATD', cidr: '192.168.156.0/24' }, '192.168.156.9', { name: 'FW-A', iface: 'Eth-Trunk10', mask: '30', note: 'VRRP虚地址' });
+    eq(JSON.stringify(row), JSON.stringify(['', 'FW-A', 'Eth-Trunk10', '192.168.156.9', '30', 'VRRP虚地址']));
+    var fb = IO.huaweiRow({ name: 'ATD', cidr: '192.168.156.0/24' }, '192.168.156.9', {});
+    eq(fb[4], '24');
+    eq(fb[0], '');   // 子网列留空，供人工维护
+  });
+  t('华为导出：子网列始终留空', function () {
+    var row = IO.huaweiRow({ name: 'ATD', cidr: '10.0.0.0/24' }, '10.0.0.1', { name: 'x' });
+    eq(row[0], '');
+    eq(IO.huaweiHeaders()[0], '子网');
+  });
+  t('导入模板：记住表头与列序并复现', function () {
+    var old = Data.loadTemplate();
+    try {
+      Data.saveTemplate({ headers: ['子网', '接口IP', '掩码', '设备名称', '接口名称', '备注'],
+        mapping: { subnet: 0, ip: 1, mask: 2, name: 3, iface: 4, note: 5 }, source: 'x', savedAt: 'now' });
+      var v = IO.huaweiView();
+      eq(v.custom, true);
+      eq(JSON.stringify(v.headers), JSON.stringify(['子网', '接口IP', '掩码', '设备名称', '接口名称', '备注']));
+      var row = IO.huaweiTemplateRow(v.view, { name: 'ATD', cidr: '10.0.0.0/24' }, '10.0.0.5',
+        { name: 'dev', iface: 'Gi0/1', mask: '24' });
+      eq(JSON.stringify(row), JSON.stringify(['', '10.0.0.5', '24', 'dev', 'Gi0/1', '']));
+    } finally {
+      if (old) Data.saveTemplate(old); else Data.clearTemplate();
+    }
+  });
+  t('导入模板：未覆盖字段并入备注列', function () {
+    var old = Data.loadTemplate();
+    try {
+      Data.saveTemplate({ headers: ['接口IP', '掩码', '备注'], mapping: { ip: 0, mask: 1, note: 2 }, source: 'x', savedAt: 'now' });
+      var v = IO.huaweiView();
+      var row = IO.huaweiTemplateRow(v.view, { name: 'a', cidr: '10.0.0.0/24' }, '10.0.0.9',
+        { name: 'dev', mask: '24', mac: 'AA-BB-CC-DD-EE-FF', status: 'reserved' });
+      eq(row.length, 3);
+      eq(row[0], '10.0.0.9');
+      eq(row[1], '24');
+      eq(row[2].indexOf('MAC: AA-BB-CC-DD-EE-FF') >= 0, true);
+      eq(row[2].indexOf('状态: 预留') >= 0, true);
+    } finally {
+      if (old) Data.saveTemplate(old); else Data.clearTemplate();
+    }
+  });
+  t('备注汇总不写入隐含的「已分配」', function () {
+    eq(IO.huaweiNote({ status: 'assigned' }), '');
+    eq(IO.huaweiNote({ status: 'assigned', mac: 'AA' }), 'MAC: AA');
+    eq(IO.huaweiNote({ status: 'reserved' }), '状态: 预留');
+    eq(IO.huaweiNote({ status: 'assigned', note: '原备注' }), '原备注');
+  });
+  t('无模板时回落到内置华为 6 列', function () {
+    var old = Data.loadTemplate();
+    try {
+      Data.clearTemplate();
+      var v = IO.huaweiView();
+      eq(v.custom, false);
+      eq(JSON.stringify(v.headers), JSON.stringify(IO.huaweiHeaders()));
+    } finally {
+      if (old) Data.saveTemplate(old);
+    }
+  });
+  t('华为导出行：其余字段并入备注', function () {
+    var row = IO.huaweiRow({ name: 'ATD', cidr: '10.0.0.0/30' }, '10.0.0.1', {
+      name: 'x', hostname: 'h1', mgmtIp: '192.0.2.1', mac: 'AA-BB-CC-DD-EE-FF', purpose: '网关', deviceType: 'router', status: 'reserved', note: '原备注'
+    });
+    eq(row[5].indexOf('原备注') === 0, true);
+    eq(row[5].indexOf('主机名: h1') > 0, true);
+    eq(row[5].indexOf('设备类型: 路由器') > 0, true);
+    eq(row[5].indexOf('状态: 预留') > 0, true);
+  });
+  t('华为导出：同址 VRRP 还原为独立行且不留标记', function () {
+    var oldData = Store.state, oldTpl = Data.loadTemplate();
+    try {
+      Data.clearTemplate();
+      Store.state = { data: { subnets: [{ id: 's1', name: 'ATD', cidr: '192.168.156.0/24', ips: {
+        '192.168.156.1': { status: 'assigned', name: 'FW-A', iface: 'Eth-Trunk10', mask: '24', note: 'VRRP虚地址；同址设备: FW-B' }
+      } }] } };
+      var rows = IO.huaweiRows();
+      eq(rows.length, 2);
+      eq(rows[0][1], 'FW-A');
+      eq(rows[1][1], 'FW-B');
+      eq(rows[0][5], 'VRRP虚地址');
+      eq(rows[1][5], 'VRRP虚地址');
+      eq(rows[0][0], '');   // 子网列留空
+      eq(/同址设备/.test(rows[0][5] + rows[1][5]), false);
+    } finally { Store.state = oldData; if (oldTpl) Data.saveTemplate(oldTpl); }
+  });
   t('inSubnet 边界', function () {
     var net = Calc.ipToUint('10.0.0.0'), bc = Calc.ipToUint('10.0.0.7');
     eq(Calc.inSubnet('10.0.0.0', net, bc), true);
@@ -4280,6 +4821,15 @@ function runSelftest() {
     var xml = IO.Xlsx.sheetXml([['IP', '设备'], ['10.0.0.1', '路由器']]);
     if (xml.indexOf('t="inlineStr"') < 0) throw new Error('缺 inlineStr');
     if (xml.indexOf('路由器') < 0) throw new Error('缺中文内容');
+  });
+  t('sheetXml 列宽与自动筛选', function () {
+    var xml = IO.Xlsx.sheetXml([['A', 'B', 'C']], [15, 46, 9.7]);
+    if (xml.indexOf('<cols>') < 0) throw new Error('缺 cols');
+    if (xml.indexOf('width="46"') < 0) throw new Error('缺列宽');
+    if (xml.indexOf('<autoFilter ref="A1:C1"/>') < 0) throw new Error('缺 autoFilter');
+    var plain = IO.Xlsx.sheetXml([['A', 'B']]);
+    if (plain.indexOf('<cols>') >= 0) throw new Error('无 widths 时不应输出 cols');
+    if (plain.indexOf('<autoFilter ref="A1:B1"/>') < 0) throw new Error('表头筛选应始终存在');
   });
   t('esc 转义', function () { eq(esc('<b a="1">&\'</b>'), '&lt;b a=&quot;1&quot;&gt;&amp;&#39;&lt;/b&gt;'); });
   t('STATUS 关键词归一', function () {
