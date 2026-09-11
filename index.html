@@ -762,6 +762,51 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
 .panel-foot { flex-wrap:wrap; }
 #p-nextfree { padding-left:10px; padding-right:10px; }
 #tb-free { padding:3px 10px; font-size:12.5px; }
+/* ---- feat: audit ---- */
+#confirm .dlg-body { max-height:65vh; overflow:auto; }
+.audit-wrap { min-width:340px; max-width:600px; }
+.audit-ok { font-weight:600; color:var(--st-assigned); padding:4px 0; }
+.audit-meta { font-size:12px; color:var(--muted); margin-top:8px; }
+.audit-ops { margin-top:14px; display:flex; justify-content:flex-end; }
+.audit-ops [data-audit-copy] {
+  padding:5px 14px; border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--panel2); font-size:13px;
+}
+.audit-ops [data-audit-copy]:hover { border-color:var(--accent); color:var(--accent); }
+.audit-tbl { width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+.audit-tbl th {
+  text-align:left; font-size:11.5px; color:var(--muted); font-weight:600;
+  border-bottom:1px solid var(--border); padding:4px 10px 4px 0; white-space:nowrap;
+}
+.audit-tbl td { padding:7px 10px 7px 0; border-bottom:1px dashed var(--border); vertical-align:top; }
+.audit-tbl tbody tr:last-child td { border-bottom:none; }
+.audit-ip { font-family:Consolas,monospace; font-weight:700; white-space:nowrap; }
+.audit-loc { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:12.5px; }
+.audit-loc + .audit-loc { margin-top:4px; }
+.audit-chip { flex:0 0 auto; font-size:11px; line-height:1.5; padding:0 6px; border-radius:4px; color:#fff; }
+.audit-chip.st-assigned { background:var(--st-assigned); }
+.audit-chip.st-reserved { background:var(--st-reserved); }
+.audit-chip.st-conflict { background:var(--st-conflict); }
+.audit-chip.st-free { background:var(--st-free); color:var(--st-free-t); }
+.audit-cidr { font-family:Consolas,monospace; font-size:11px; color:var(--muted); }
+.audit-dev { font-size:11.5px; color:var(--muted); }
+.audit-stats { display:flex; gap:14px 18px; flex-wrap:wrap; }
+.audit-stat { display:flex; flex-direction:column; min-width:50px; }
+.audit-stat b { font-size:17px; font-weight:700; }
+.audit-stat span { font-size:11px; color:var(--muted); }
+.audit-stat.c-assigned b { color:var(--st-assigned); }
+.audit-stat.c-reserved b { color:var(--st-reserved); }
+.audit-stat.c-conflict b { color:var(--st-conflict); }
+.audit-stat.c-accent b { color:var(--accent); }
+.audit-subhead {
+  font-size:12px; font-weight:600; color:var(--muted);
+  margin-top:14px; padding-top:10px; border-top:1px solid var(--border);
+}
+.audit-tbl-top { margin-top:4px; }
+.audit-tbl-top td { padding:5px 10px 5px 0; border-bottom:none; }
+.audit-top-name { font-weight:600; font-size:12.5px; white-space:nowrap; }
+.audit-top-name .audit-cidr { display:block; font-weight:400; margin-top:1px; }
+.audit-top-util { width:170px; }
 </style>
 </head>
 <body>
@@ -776,6 +821,7 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
   <button class="hbtn" data-action="import-json" title="导入 JSON 备份">导入备份</button>
   <button class="hbtn" data-action="export-json" title="导出 JSON 全量备份">导出备份</button>
   <button class="hbtn" data-action="status-rules" title="编辑导入状态关键词规则">状态规则</button>
+  <button class="hbtn" data-action="open-dash" title="全局总览仪表盘">总览</button>
   <button class="hbtn" data-action="toggle-theme" title="切换亮/暗主题">🌓</button>
 </header>
 
@@ -815,6 +861,7 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
       </select></label>
       <button class="btn" id="tb-free" title="打开当前网段第一个空闲地址">跳到空闲</button>
       <div class="legend" id="legend"></div>
+      <button class="hbtn" data-action="conflict-scan" title="扫描所有网段中重复登记的 IP">冲突扫描</button>
     </div>
     <div id="stats" hidden></div>
     <div id="grid-wrap"><div id="grid"></div><div id="grid-note" hidden></div></div>
@@ -2408,6 +2455,206 @@ Batch.menu = function (ev, ip) {
   };
 };
 
+/* ============================================================
+/* ============================================================
+ * [7d] Audit —— 全库冲突扫描 + 全局总览仪表盘
+ * ============================================================ */
+var Audit = {};
+
+// 遍历所有网段的所有已登记 IP，构建 ip -> [登记项] 映射，
+// 出现 ≥2 条（同一 IP 登记在多个网段）即冲突。返回结构化结果。
+Audit.scanConflicts = function () {
+  var map = {};
+  var scanned = 0, records = 0;
+  (Store.state.data.subnets || []).forEach(function (s) {
+    scanned++;
+    var ips = s.ips || {};
+    for (var ip in ips) {
+      records++;
+      var r = ips[ip] || {};
+      if (!map[ip]) map[ip] = [];
+      map[ip].push({
+        subnetId: s.id,
+        name: s.name || s.cidr,
+        cidr: s.cidr,
+        status: r.status || 'free',
+        device: r.name || r.hostname || ''
+      });
+    }
+  });
+  var groups = [];
+  for (var ip in map) {
+    if (map[ip].length >= 2) groups.push({ ip: ip, entries: map[ip] });
+  }
+  groups.sort(function (a, b) {
+    return (Calc.ipToUint(a.ip) || 0) - (Calc.ipToUint(b.ip) || 0);
+  });
+  return { groups: groups, scanned: scanned, records: records };
+};
+
+// 冲突结果 → 纯文本（供「复制结果」）
+Audit.conflictText = function (res) {
+  var lines = ['IPViewer 冲突扫描结果：共 ' + res.groups.length + ' 组重复登记（扫描 '
+    + res.scanned + ' 个网段 / ' + res.records + ' 条登记记录）'];
+  res.groups.forEach(function (g) {
+    lines.push(g.ip);
+    g.entries.forEach(function (e) {
+      lines.push('  - ' + e.name + '（' + e.cidr + '）· ' + (STATUS_LABEL[e.status] || e.status || '?')
+        + (e.device ? ' · ' + e.device : ''));
+    });
+  });
+  return lines.join('\n');
+};
+
+// 冲突扫描结果弹窗
+Audit.showConflicts = function () {
+  var res = Audit.scanConflicts();
+  Audit._last = res;
+  var body;
+  if (!res.groups.length) {
+    body = '<div class="audit-ok">未发现重复登记的 IP</div>'
+      + '<div class="audit-meta">已扫描 ' + res.scanned + ' 个网段 · ' + res.records + ' 条登记记录</div>';
+  } else {
+    var LIMIT = 20;
+    var shown = res.groups.slice(0, LIMIT);
+    var rows = shown.map(function (g) {
+      var locs = g.entries.map(function (e) {
+        return '<div class="audit-loc">'
+          + '<span class="audit-chip st-' + esc(e.status) + '">' + esc(STATUS_LABEL[e.status] || e.status || '?') + '</span>'
+          + '<span>' + esc(e.name) + '</span>'
+          + '<span class="audit-cidr">' + esc(e.cidr) + '</span>'
+          + (e.device ? '<span class="audit-dev">' + esc(e.device) + '</span>' : '')
+          + '</div>';
+      }).join('');
+      return '<tr><td class="audit-ip">' + esc(g.ip) + '</td><td>' + locs + '</td></tr>';
+    }).join('');
+    body = '<table class="audit-tbl"><thead><tr><th>IP</th><th>涉及网段（状态 / 设备名）</th></tr></thead>'
+      + '<tbody>' + rows + '</tbody></table>';
+    if (res.groups.length > LIMIT) {
+      body += '<div class="audit-meta">仅显示前 ' + LIMIT + ' 组，共 ' + res.groups.length + ' 组重复登记。</div>';
+    }
+    body += '<div class="audit-meta">已扫描 ' + res.scanned + ' 个网段 · ' + res.records + ' 条登记记录</div>'
+      + '<div class="audit-ops"><button type="button" data-audit-copy="1">复制结果</button></div>';
+  }
+  Dialog.confirm('冲突扫描', body, function () {}, '关闭');
+};
+
+// 全局聚合：网段/目录/记录数、各状态合计、整体利用率、利用率 Top5。
+// CIDR 解析失败的网段跳过并计数；/0（total=4294967296）跳过 usable 统计避免溢出。
+Audit.dashboard = function () {
+  var subnets = Store.state.data.subnets || [];
+  var d = {
+    subnets: subnets.length,
+    groups: (Store.state.data.groups || []).length,
+    records: 0, assigned: 0, reserved: 0, conflict: 0,
+    usableSum: 0, parsed: 0, skippedBad: 0, skippedHuge: 0,
+    utilOverall: 0, top: []
+  };
+  var tops = [];
+  subnets.forEach(function (s) {
+    var a = 0, r = 0, c = 0, n = 0;
+    var ips = s.ips || {};
+    for (var ip in ips) {
+      var st = (ips[ip] || {}).status || 'free';
+      if (st === 'assigned') a++;
+      else if (st === 'reserved') r++;
+      else if (st === 'conflict') c++;
+      n++;
+    }
+    d.records += n; d.assigned += a; d.reserved += r; d.conflict += c;
+    var info = null;
+    try { info = Calc.parseCidr(s.cidr); } catch (e) { info = null; }
+    if (!info) { d.skippedBad++; return; }
+    if (info.total >= 4294967296) { d.skippedHuge++; return; }
+    var usable = Calc.usableCount(info.total, info.pre);
+    d.usableSum += usable;
+    d.parsed++;
+    tops.push({
+      name: s.name || s.cidr, cidr: s.cidr, assigned: a, usable: usable,
+      util: usable ? Math.round(a / usable * 100) : 0
+    });
+  });
+  tops.sort(function (x, y) { return y.util - x.util || y.assigned - x.assigned; });
+  d.top = tops.slice(0, 5);
+  if (d.usableSum > 0) d.utilOverall = Math.round(d.assigned / d.usableSum * 100);
+  return d;
+};
+
+// 全局总览弹窗
+Audit.showDashboard = function () {
+  var d = Audit.dashboard();
+  function stat(label, val, cls) {
+    return '<div class="audit-stat' + (cls ? ' ' + cls : '') + '"><b>' + val + '</b><span>' + esc(label) + '</span></div>';
+  }
+  var body = '<div class="audit-wrap"><div class="audit-stats">'
+    + stat('网段', d.subnets)
+    + stat('目录', d.groups)
+    + stat('登记记录', d.records)
+    + stat('已分配', d.assigned, 'c-assigned')
+    + stat('预留', d.reserved, 'c-reserved')
+    + stat('冲突', d.conflict, 'c-conflict')
+    + stat('整体利用率', d.utilOverall + '%', 'c-accent')
+    + '</div>';
+  if (d.top.length) {
+    var rows = d.top.map(function (t) {
+      var w = Math.max(0, Math.min(100, t.util));
+      return '<tr><td class="audit-top-name">' + esc(t.name)
+        + '<span class="audit-cidr">' + esc(t.cidr) + '</span></td>'
+        + '<td class="audit-top-util"><div class="util-bar"><i style="width:' + w + '%"></i></div>'
+        + '<span class="util-txt">' + t.util + '%</span></td></tr>';
+    }).join('');
+    body += '<div class="audit-subhead">利用率 Top5</div>'
+      + '<table class="audit-tbl audit-tbl-top"><tbody>' + rows + '</tbody></table>';
+  } else {
+    body += '<div class="audit-meta">暂无可统计利用率的网段。</div>';
+  }
+  if (d.skippedBad) body += '<div class="audit-meta">' + d.skippedBad + ' 个网段 CIDR 解析失败，未计入利用率统计。</div>';
+  if (d.skippedHuge) body += '<div class="audit-meta">' + d.skippedHuge + ' 个超大网段（/0）未计入利用率统计。</div>';
+  body += '</div>';
+  Dialog.confirm('全局总览', body, function () {}, '关闭');
+};
+
+// 复制文本：优先 navigator.clipboard，失败降级 document.execCommand
+Audit.copyText = function (txt, onOk, onFail) {
+  var ok = function () { if (onOk) onOk(); };
+  var failed = function () { if (onFail) onFail(); };
+  var fallback = function () {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = txt;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      var done = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (done) ok(); else failed();
+    } catch (e) { failed(); }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try { navigator.clipboard.writeText(txt).then(ok, fallback); }
+    catch (e) { fallback(); }
+  } else fallback();
+};
+
+// 本分区入口按钮共用一个 document 级委托：
+// data-action="conflict-scan" / "open-dash" 不在 Events.init 的 switch 内（其无 default 分支，不会冲突）
+document.addEventListener('click', function (ev) {
+  var el = ev.target.closest('[data-action="conflict-scan"],[data-action="open-dash"],[data-audit-copy]');
+  if (!el) return;
+  if (el.hasAttribute('data-audit-copy')) {
+    var res = Audit._last;
+    if (!res || !res.groups || !res.groups.length) return;
+    Audit.copyText(Audit.conflictText(res), function () {
+      toast('冲突扫描结果已复制到剪贴板');
+    }, function () {
+      toast('复制失败，请手动选择文本复制', { err: true });
+    });
+    return;
+  }
+  if (el.dataset.action === 'conflict-scan') Audit.showConflicts();
+  else Audit.showDashboard();
+});
 /* ============================================================
  * [7e] PanelExtras —— 下一个空闲 IP 跳转（feat: panel-extras）
  * ============================================================ */
@@ -6200,6 +6447,74 @@ function runSelftest() {
       Store.state = old;
       Panel.render();
     }
+  });
+
+  /* ---------- [7d] Audit：全库冲突扫描 + 全局总览 ---------- */
+  t('Audit 冲突扫描发现跨网段重复 IP', function () {
+    var oldState = Store.state;
+    try {
+      Store.state = { data: { groups: [], subnets: [
+        { id: 's1', name: '网段A', cidr: '10.0.0.0/24', ips: {
+          '10.0.0.5': { status: 'assigned', name: 'web-1' },
+          '10.0.0.6': { status: 'reserved' }
+        } },
+        { id: 's2', name: '网段B', cidr: '10.0.0.0/25', ips: {
+          '10.0.0.5': { status: 'conflict', hostname: 'web-alias' }
+        } }
+      ] } };
+      var res = Audit.scanConflicts();
+      eq(res.scanned, 2);
+      eq(res.records, 3);
+      eq(res.groups.length, 1);
+      eq(res.groups[0].ip, '10.0.0.5');
+      eq(res.groups[0].entries.length, 2);
+      eq(res.groups[0].entries[0].cidr, '10.0.0.0/24');
+      eq(res.groups[0].entries[0].device, 'web-1');
+      eq(res.groups[0].entries[1].status, 'conflict');
+    } finally { Store.state = oldState; }
+  });
+  t('Audit 无重复时冲突为空', function () {
+    var oldState = Store.state;
+    try {
+      Store.state = { data: { groups: [], subnets: [
+        { id: 's1', name: 'A', cidr: '192.168.1.0/24', ips: { '192.168.1.1': { status: 'assigned' } } },
+        { id: 's2', name: 'B', cidr: '192.168.2.0/24', ips: { '192.168.2.1': { status: 'assigned' } } }
+      ] } };
+      var res = Audit.scanConflicts();
+      eq(res.groups.length, 0);
+      eq(res.records, 2);
+    } finally { Store.state = oldState; }
+  });
+  t('Audit 仪表盘聚合统计与 Top5', function () {
+    var oldState = Store.state;
+    try {
+      Store.state = { data: { groups: [{ id: 'g1', name: 'ATD' }], subnets: [
+        { id: 's1', name: 'A', cidr: '10.0.0.0/24', ips: {
+          '10.0.0.1': { status: 'assigned' }, '10.0.0.2': { status: 'assigned' },
+          '10.0.0.3': { status: 'reserved' }, '10.0.0.4': { status: 'conflict' }
+        } },
+        { id: 's2', name: 'B', cidr: '10.0.1.0/25', ips: {
+          '10.0.1.1': { status: 'assigned' }, '10.0.1.2': { status: 'assigned' }
+        } },
+        { id: 's3', name: '坏网段', cidr: 'not-a-cidr', ips: { '10.9.9.9': { status: 'assigned' } } },
+        { id: 's4', name: '全网', cidr: '0.0.0.0/0', ips: {} }
+      ] } };
+      var d = Audit.dashboard();
+      eq(d.subnets, 4);
+      eq(d.groups, 1);
+      eq(d.records, 7);
+      eq(d.assigned, 5);
+      eq(d.reserved, 1);
+      eq(d.conflict, 1);
+      eq(d.usableSum, 254 + 126);            // /24=254、/25=126；坏网段与 /0 跳过
+      eq(d.utilOverall, Math.round(5 / 380 * 100));
+      eq(d.skippedBad, 1);
+      eq(d.skippedHuge, 1);
+      eq(d.top.length, 2);
+      eq(d.top[0].cidr, '10.0.1.0/25');      // 2/126≈1.6% > 2/254≈0.8%
+      eq(d.top[0].util, 2);
+      eq(d.top[1].cidr, '10.0.0.0/24');
+    } finally { Store.state = oldState; }
   });
 
   var asyncPending = 0;
