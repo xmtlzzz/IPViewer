@@ -168,6 +168,12 @@ main { flex:1; display:flex; min-height:0; }
 .snt-card .cidr { font-family:Consolas,monospace; font-size:12px; color:var(--muted); margin:2px 0 6px; }
 .util-bar { height:5px; border-radius:3px; background:var(--st-free); overflow:hidden; }
 .util-bar i { display:block; height:100%; background:var(--st-assigned); transition:width .35s ease; }
+.util-bar.warn i { background:#f59e0b; }
+.util-bar.crit i { background:var(--st-conflict); }
+.util-txt.warn { color:#b45309; }
+.util-txt.crit { color:var(--st-conflict); font-weight:600; }
+#stats .util-warn { color:#b45309; }
+#stats .util-crit { color:var(--st-conflict); }
 .util-txt { font-size:11px; color:var(--muted); margin-top:2px; }
 #content { flex:1; display:flex; flex-direction:column; min-width:0; overflow:auto; }
 
@@ -365,6 +371,7 @@ dialog::backdrop { background:rgba(0,0,0,.35); }
 .map-grid { display:grid; grid-template-columns:1fr 1fr; gap:4px 18px; }
 #wiz .hint { font-size:12px; color:var(--muted); margin:6px 0; }
 #wiz .err { color:var(--st-conflict); font-size:12.5px; margin-top:8px; white-space:pre-wrap; }
+.io-detail { max-height:200px; overflow:auto; background:var(--panel2); padding:8px; border-radius:6px; font-size:12px; white-space:pre-wrap; user-select:all; }
 .kw-row { display:grid; grid-template-columns:1fr 110px 28px; gap:6px; align-items:center; margin-bottom:5px; }
 .kw-row .kw-pat { padding:4px 8px; border:1px solid var(--border); border-radius:6px; background:var(--panel2); font-family:Consolas,monospace; font-size:12px; }
 .kw-row .kw-st { padding:4px 6px; border:1px solid var(--border); border-radius:6px; background:var(--panel2); }
@@ -790,6 +797,7 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
 .snap-row { display:flex; align-items:center; gap:10px; }
 .snap-row .snap-time { flex:1; font-family:Consolas,monospace; }
 .snap-row .snap-size { color:var(--muted); font-size:11px; white-space:nowrap; }
+.hist-label { flex:1; font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:260px; }
 /* ---- feat: panel-extras ---- */
 .panel-foot { flex-wrap:wrap; }
 #p-nextfree { padding-left:10px; padding-right:10px; }
@@ -869,6 +877,7 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
       </select>
       <button class="hbtn" data-action="add-group" title="新建目录（子网分组，如 ATD）">＋ 目录</button>
       <button class="hbtn" data-action="add-subnet">＋ 新增</button>
+      <button class="hbtn" data-action="add-subnet-batch" title="多行粘贴 CIDR 批量创建网段">批量</button>
       <button class="hbtn" data-action="side-pick" id="side-pick-btn" title="多选网段后批量删除">多选</button>
     </div>
     <div id="subnet-list"></div>
@@ -1042,7 +1051,7 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
 <footer>
   <button type="button" id="ft-undo" title="撤销（Ctrl+Z）" disabled>撤销</button>
   <button type="button" id="ft-redo" title="重做（Ctrl+Y / Ctrl+Shift+Z）" disabled>重做</button>
-  <button type="button" id="ft-snap" title="历史快照（自动保留最近 5 份）">快照</button>
+  <button type="button" id="ft-snap" title="操作历史与历史快照（跳回任意一步 / 恢复覆盖前数据）">历史</button>
   <span id="ft-count"></span>
   <span id="ft-size"></span>
   <span id="ft-backup"></span>
@@ -1797,8 +1806,9 @@ Render.subnetCard = function (s) {
       + '</span>')
     + '</div>'
     + '<div class="cidr">' + esc(s.cidr) + (s.vlan !== '' && s.vlan != null ? ' · VLAN' + esc(s.vlan) : '') + '</div>'
-    + '<div class="util-bar"><i style="width:' + util + '%"></i></div>'
-    + '<div class="util-txt">已分配 ' + util + '%</div>'
+    + '<div class="util-bar' + (util >= 95 ? ' crit' : util >= 80 ? ' warn' : '') + '"><i style="width:' + util + '%"></i></div>'
+    + '<div class="util-txt' + (util >= 95 ? ' crit' : util >= 80 ? ' warn' : '') + '">已分配 ' + util + '%'
+    + (util >= 95 ? ' ⚠ 接近饱和' : util >= 80 ? ' ⚠ 偏高' : '') + '</div>'
     + '</div>';
 };
 // 目录头：多选模式下显示全选复选框，否则显示编辑/删除
@@ -1985,7 +1995,8 @@ Render.stats = function (s) {
     '<span style="color:var(--st-reserved)">预留 <b>' + st.reserved + '</b></span>' +
     '<span style="color:var(--st-conflict)">冲突 <b>' + st.conflict + '</b></span>' +
     '<span>空闲 <b>' + st.free + '</b></span>' +
-    '<span>利用率 <b>' + st.util + '%</b></span>' +
+    '<span>利用率 <b' + (st.util >= 95 ? ' class="util-crit"' : st.util >= 80 ? ' class="util-warn"' : '') + '>' + st.util + '%</b>'
+    + (st.util >= 95 ? ' ⚠' : '') + '</span>' +
     (s.note ? '<span>📝 ' + esc(s.note) + '</span>' : '');
 };
 Render.legend = function () {
@@ -2184,7 +2195,26 @@ Panel.step = function (dir) {
  * [5b] Undo/Snap —— 撤销重做与多级快照
  * ============================================================ */
 // 撤销历史只存内存（刷新即清空，属设计决策）；多级快照持久化于 LS.snaps
+// 栈元素：{ label: 可读操作名, ts: 时间, snap: 操作前数据快照串 }
 var Undo = { undoStack: [], redoStack: [], MAX: 30 };
+// action 名 → 可读操作名（历史面板显示；未列出的用 action 名兜底）
+var ACTION_LABEL = {
+  'subnet-add': '新增网段', 'subnet-update': '编辑网段', 'subnet-delete': '删除网段',
+  'subnet-delete-many': '批量删除网段', 'ip-set': '登记/修改 IP', 'ip-clear': '清除登记',
+  'group-add': '新增目录', 'group-update': '编辑目录', 'group-delete': '删除目录'
+};
+Undo.labelOf = function (name, args) {
+  var base = ACTION_LABEL[name] || name;
+  if ((name === 'subnet-add' || name === 'subnet-update') && args && args[0] && args[0].cidr) base += ' ' + args[0].cidr;
+  if (name === 'subnet-delete' && args && args[0]) {
+    var t = Store.findSubnet(args[0]);
+    if (t) base += ' ' + t.cidr;
+  }
+  if (name === 'subnet-delete-many' && args && args[0] && args[0].length) base += ' ' + args[0].length + ' 个';
+  if ((name === 'ip-set' || name === 'ip-clear') && args && args[1]) base += ' ' + args[1];
+  if (name === 'group-add' && args && args[0] && args[0].name) base += ' ' + args[0].name;
+  return base;
+};
 // UI-only action 不入撤销历史（只改视图状态，不动 data）
 var NO_UNDO = {
   'subnet-select': 1, 'select-ip': 1, 'open-panel': 1, 'close-panel': 1,
@@ -2194,20 +2224,22 @@ var NO_UNDO = {
 // 包装唯一 mutation 入口：执行可撤销 action 前快照当前 data（新动作分叉 → 清空重做栈）
 var _undoOrigAct = Store.act;
 Store.act = function (name) {
-  if (ACTIONS[name] && !NO_UNDO[name]) Undo.push(JSON.stringify(this.state.data));
+  if (ACTIONS[name] && !NO_UNDO[name]) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    Undo.push({ label: Undo.labelOf(name, args), ts: nowIso(), snap: JSON.stringify(this.state.data) });
+  }
   return _undoOrigAct.apply(this, arguments);
 };
-Undo.push = function (snap) {
-  Undo.undoStack.push(snap);
+Undo.push = function (entry) {
+  Undo.undoStack.push(entry);
   if (Undo.undoStack.length > Undo.MAX) Undo.undoStack.shift();
   Undo.redoStack.length = 0;
 };
 // 恢复快照进 state；sink = 当前数据去向（undo 时进 redoStack，redo 时进 undoStack）
-Undo.apply = function (snap, sink) {
-  var d = Data._safeParse(snap);
+// 把快照串恢复进 state（含悬空引用清理、持久化、重绘）
+Undo.restore = function (snapStr) {
+  var d = Data._safeParse(snapStr);
   if (!d) return false;
-  sink.push(JSON.stringify(Store.state.data));
-  if (sink.length > Undo.MAX) sink.shift();
   Store.state.data = Data.migrate(d);
   // 校正悬空的当前网段（如撤销 subnet-add / subnet-delete 之后）
   if (Store.state.ui && Store.state.ui.activeSubnetId && !Store.findSubnet(Store.state.ui.activeSubnetId)) {
@@ -2216,32 +2248,89 @@ Undo.apply = function (snap, sink) {
     Store.state.ui.panelOpen = false;
   }
   if (Store.state.ui && Store.state.settings) Store.state.settings.lastSubnetId = Store.state.ui.activeSubnetId;
+  // 清理悬空引用：撤销/重做可能删掉或重建网段，侧栏多选与格子批量选择中的失效 id 需剔除
+  if (typeof SideSel !== 'undefined' && SideSel.sel && SideSel.sel.length) {
+    SideSel.sel = SideSel.sel.filter(function (id) { return !!Store.findSubnet(id); });
+    if (typeof Render !== 'undefined' && Render.subnetList) { /* 由 emit 触发重绘 */ }
+  }
+  if (typeof Batch !== 'undefined' && Batch.sel && Batch.sel.length) {
+    var act = Store.activeSubnet();
+    if (!act) { Batch.sel = []; }
+    else {
+      var binfo = null;
+      try { binfo = Calc.parseCidr(act.cidr); } catch (e) {}
+      if (binfo) {
+        Batch.sel = Batch.sel.filter(function (ip) { return Calc.idxOfIp(ip, binfo.network, binfo.broadcast) >= 0; });
+      }
+    }
+  }
   Store.persist();                       // selftest 抑制期间自动跳过落盘，历史照常工作
   Store.emit();
+  if (typeof SideSel !== 'undefined' && typeof SideSel.bar === 'function') SideSel.bar();
+  if (typeof Batch !== 'undefined' && typeof Batch.bar === 'function') Batch.bar();
   return true;
+};
+// 撤销/重做一步：当前态按 label 记录进 sink（对方栈），再恢复 entry.snap
+Undo.apply = function (entry, sink, myLabel) {
+  if (!entry || !entry.snap) return false;
+  sink.push({ label: myLabel || '跳转', ts: nowIso(), snap: JSON.stringify(Store.state.data) });
+  if (sink.length > Undo.MAX) sink.shift();
+  return Undo.restore(entry.snap);
 };
 Store.canUndo = function () { return Undo.undoStack.length > 0; };
 Store.canRedo = function () { return Undo.redoStack.length > 0; };
 Store.undo = function () {
   if (!Undo.undoStack.length) return false;
-  return Undo.apply(Undo.undoStack.pop(), Undo.redoStack);
+  var e = Undo.undoStack.pop();
+  return Undo.apply(e, Undo.redoStack, '撤销「' + (e.label || '操作') + '」');
 };
 Store.redo = function () {
   if (!Undo.redoStack.length) return false;
-  return Undo.apply(Undo.redoStack.pop(), Undo.undoStack);
+  var e = Undo.redoStack.pop();
+  return Undo.apply(e, Undo.undoStack, '重做「' + (e.label || '操作') + '」');
+};
+// 跳到第 i 步之前（i = undoStack 下标）：第 i 步及其之后的操作全部转入重做栈
+Store.jumpTo = function (i) {
+  if (i < 0 || i >= Undo.undoStack.length) return false;
+  var steps = Undo.undoStack.splice(i);   // steps[k].snap = 执行第 k 步【前】的状态
+  // 目标 = steps[0].snap；redo 弹序须为 steps[1] → steps[2] → … → 当前态
+  // 栈顶在末尾，故压栈顺序 = [当前态, steps[n-1], …, steps[1]]
+  var chain = [{ label: '跳转前状态', ts: nowIso(), snap: JSON.stringify(Store.state.data) }];
+  for (var k = steps.length - 1; k >= 1; k--) chain.push(steps[k]);
+  chain.forEach(function (e) { Undo.redoStack.push(e); });
+  if (Undo.redoStack.length > Undo.MAX) Undo.redoStack.splice(0, Undo.redoStack.length - Undo.MAX);
+  return Undo.restore(steps[0].snap);
 };
 
 /* ---- 多级时间戳快照（持久化 LS.snaps，上限 5 份 FIFO，写入失败静默） ---- */
 var SNAP_MAX = 5;
+// 大数据（>1MB）时降低快照份数，避免快照占满 localStorage 配额
+var SNAP_BIG_CHARS = 1024 * 1024;
+Data.snapLimit = function (raw) {
+  return (raw && raw.length > SNAP_BIG_CHARS) ? 3 : SNAP_MAX;
+};
 Data.pushSnapshot = function (raw) {
   if (!raw) return;
   try {
     var arr = Data._safeParse(localStorage.getItem(LS.snaps));
     if (!Array.isArray(arr)) arr = [];
-    arr.push({ ts: nowIso(), data: raw });
-    while (arr.length > SNAP_MAX) arr.shift();
+    // 去重：与最近一份内容相同则只更新时间戳，不重复占用配额
+    var last = arr[arr.length - 1];
+    if (last && last.data === raw) { last.ts = nowIso(); }
+    else { arr.push({ ts: nowIso(), data: raw }); }
+    var lim = Data.snapLimit(raw);
+    while (arr.length > lim) arr.shift();
     localStorage.setItem(LS.snaps, JSON.stringify(arr));
-  } catch (e) { /* 配额满等写入失败不影响主流程 */ }
+  } catch (e) {
+    // 配额满：丢弃最旧快照后重试一次，仍失败则静默（不影响主流程）
+    try {
+      var arr2 = Data._safeParse(localStorage.getItem(LS.snaps));
+      if (Array.isArray(arr2) && arr2.length > 1) {
+        arr2.shift();
+        localStorage.setItem(LS.snaps, JSON.stringify(arr2));
+      }
+    } catch (e2) {}
+  }
 };
 // 只返回元数据，不暴露 data 本体（防大对象泄漏到 UI）
 Data.listSnaps = function () {
@@ -2273,19 +2362,45 @@ Undo.syncButtons = function () {
   if (r) r.disabled = !Store.canRedo();
 };
 Undo.openDialog = function () {
-  var snaps = Data.listSnaps();
-  if (!snaps.length) { toast('暂无快照。导入 / 恢复备份 / 恢复快照等覆盖数据的操作会自动留存最近 ' + SNAP_MAX + ' 份'); return; }
-  var rows = [];
-  for (var i = snaps.length - 1; i >= 0; i--) {   // 新的在上，data-snap-i 保持真实下标
-    rows.push('<div class="snap-row">'
-      + '<span class="snap-time">' + esc(fmtTime(snaps[i].ts)) + '</span>'
-      + '<span class="snap-size">' + esc(fmtBytes(snaps[i].chars)) + '</span>'
-      + '<button type="button" class="btn" data-snap-i="' + i + '">恢复</button>'
-      + '</div>');
+  var body = '';
+  // 上半：本次会话操作历史（可跳回任意步）
+  body += '<div class="audit-subhead">本次会话操作（刷新页面清空）</div>';
+  if (Undo.undoStack.length) {
+    var ops = [];
+    for (var k = Undo.undoStack.length - 1; k >= 0; k--) {
+      var e = Undo.undoStack[k];
+      var isLatest = (k === Undo.undoStack.length - 1);
+      ops.push('<div class="snap-row">'
+        + '<span class="snap-time">' + esc(fmtTime(e.ts)) + '</span>'
+        + '<span class="hist-label" title="' + esc(e.label) + '">' + esc(e.label) + '</span>'
+        + (isLatest
+            ? '<span class="snap-size">最新</span>'
+            : '<button type="button" class="btn" data-hist-jump="' + k + '" title="撤销此后所有操作，回到该步之前">回到此前</button>')
+        + '</div>');
+    }
+    body += '<div class="snap-list">' + ops.join('') + '</div>';
+  } else {
+    body += '<div class="audit-meta">暂无操作记录</div>';
   }
-  Dialog.confirm('历史快照（最近 ' + snaps.length + ' / ' + SNAP_MAX + ' 份）',
-    '<div class="snap-list">' + rows.join('') + '</div>',
-    null, '关闭');
+  // 下半：持久化快照（跨会话，覆盖类操作自动留存）
+  var snaps = Data.listSnaps();
+  if (snaps.length) {
+    var rows = [];
+    for (var i = snaps.length - 1; i >= 0; i--) {
+      rows.push('<div class="snap-row">'
+        + '<span class="snap-time">' + esc(fmtTime(snaps[i].ts)) + '</span>'
+        + '<span class="snap-size">' + esc(fmtBytes(snaps[i].chars)) + '</span>'
+        + '<button type="button" class="btn" data-snap-i="' + i + '">恢复</button>'
+        + '</div>');
+    }
+    var curLimit = Data.snapLimit({ length: snaps[snaps.length - 1].chars });
+    body += '<div class="audit-subhead" style="margin-top:14px">历史快照（最近 ' + snaps.length + ' / ' + curLimit + ' 份，跨会话保留）</div>'
+      + '<div class="snap-list">' + rows.join('') + '</div>';
+  } else {
+    body += '<div class="audit-subhead" style="margin-top:14px">历史快照</div>'
+      + '<div class="audit-meta">暂无快照（导入 / 恢复等覆盖操作会自动留存）</div>';
+  }
+  Dialog.confirm('操作历史与快照', body, null, '关闭');
 };
 (function initUndoUI() {
   var fu = document.getElementById('ft-undo');
@@ -2297,6 +2412,13 @@ Undo.openDialog = function () {
   // 快照对话框内的「恢复」按钮：Dialog.confirm 的 body 是 innerHTML 注入，走事件委托
   var cfBody = document.getElementById('cf-body');
   if (cfBody) cfBody.addEventListener('click', function (ev) {
+    var jump = ev.target.closest ? ev.target.closest('[data-hist-jump]') : null;
+    if (jump) {
+      var dlgJ = document.getElementById('confirm');
+      if (dlgJ.open) dlgJ.close();
+      Store.jumpTo(+jump.getAttribute('data-hist-jump'));
+      return;
+    }
     var btn = ev.target.closest ? ev.target.closest('[data-snap-i]') : null;
     if (!btn) return;
     var dlg = document.getElementById('confirm');
@@ -2691,10 +2813,11 @@ Audit.showDashboard = function () {
   if (d.top.length) {
     var rows = d.top.map(function (t) {
       var w = Math.max(0, Math.min(100, t.util));
+      var wcls = t.util >= 95 ? ' crit' : t.util >= 80 ? ' warn' : '';
       return '<tr><td class="audit-top-name">' + esc(t.name)
         + '<span class="audit-cidr">' + esc(t.cidr) + '</span></td>'
-        + '<td class="audit-top-util"><div class="util-bar"><i style="width:' + w + '%"></i></div>'
-        + '<span class="util-txt">' + t.util + '%</span></td></tr>';
+        + '<td class="audit-top-util"><div class="util-bar' + wcls + '"><i style="width:' + w + '%"></i></div>'
+        + '<span class="util-txt' + wcls + '">' + t.util + '%</span></td></tr>';
     }).join('');
     body += '<div class="audit-subhead">利用率 Top5</div>'
       + '<table class="audit-tbl audit-tbl-top"><tbody>' + rows + '</tbody></table>';
@@ -2911,6 +3034,83 @@ Dialog.promptSubnet = function (editId) {
   foot.appendChild(cancel); foot.appendChild(ok);
   $('#dlg').showModal();
   $('#d-cidr').focus();
+};
+
+// 批量新增网段：多行粘贴 CIDR（每行一个，可带名称/目录/VLAN），逐行校验后一次性创建
+Dialog.promptSubnetBatch = function () {
+  var groups = Store.state.data.groups || [];
+  var groupOpts = '<option value="">（未分组）</option>' + groups.map(function (g) {
+    return '<option value="' + g.id + '">' + esc(g.name) + '</option>';
+  }).join('');
+  $('#dlg-title').textContent = '批量新增网段';
+  $('#dlg-body').innerHTML =
+    '<div class="dlg-form-stack">'
+    + '<div class="fld"><label>网段列表（每行一个，格式：CIDR [名称]）</label>'
+    + '<textarea id="db-cidrs" rows="8" placeholder="10.0.0.0/24 办公区\n10.0.1.0/24 研发区\n192.168.5.0/25"></textarea></div>'
+    + '<div class="fld"><label>统一归入目录（可空）</label><select id="db-group">' + groupOpts + '</select></div>'
+    + '<div class="fld"><label>统一 VLAN ID（可空）</label><input id="db-vlan" placeholder="10"></div>'
+    + '<div class="hint">CIDR 支持主机位自动规范化（如 10.0.0.7/24 → 10.0.0.0/24）；重复网段与已存在网段会自动跳过并在结果中报告。</div>'
+    + '<div class="dlg-error" id="db-err"></div>'
+    + '<div id="db-preview" class="audit-meta"></div>'
+    + '</div>';
+  var foot = $('#dlg-foot');
+  foot.innerHTML = '';
+  var cancel = document.createElement('button');
+  cancel.className = 'btn'; cancel.textContent = '取消';
+  cancel.onclick = function () { $('#dlg').close(); };
+  var ok = document.createElement('button');
+  ok.className = 'btn primary'; ok.textContent = '创建';
+  ok.onclick = function () {
+    var raw = $('#db-cidrs').value;
+    var groupId = $('#db-group') ? $('#db-group').value : '';
+    var vlan = $('#db-vlan') ? $('#db-vlan').value.trim() : '';
+    var lines = raw.split(/\r?\n/).map(function (x) { return x.trim(); }).filter(Boolean);
+    if (!lines.length) { $('#db-err').textContent = '请至少输入一个网段'; return; }
+    var existing = {};
+    Store.state.data.subnets.forEach(function (x) { existing[x.cidr] = true; });
+    var okList = [], badList = [], dupList = [];
+    var seen = {};
+    lines.forEach(function (line) {
+      // 支持「CIDR 名称」两段式（空格或制表符分隔）
+      var m = line.match(/^(\S+)(?:\s+(.+))?$/);
+      var cidrStr = m ? m[1] : line;
+      var name = m && m[2] ? m[2].trim() : '';
+      var norm;
+      try { norm = Calc.normalizeCidr(cidrStr); }
+      catch (e) { badList.push(line + '（' + e.message + '）'); return; }
+      var info;
+      try { info = Calc.parseCidr(norm); } catch (e) { badList.push(line + '（' + e.message + '）'); return; }
+      if (info.total > RENDER_LIMIT) { badList.push(line + '（' + info.total + ' 个地址超出格子图上限，请单独用「新增」创建）'); return; }
+      if (existing[norm] || seen[norm]) { dupList.push(norm); return; }
+      seen[norm] = true;
+      okList.push({ cidr: norm, name: name });
+    });
+    if (!okList.length) {
+      $('#db-err').textContent = '没有可创建的有效网段'
+        + (badList.length ? '；' + badList.length + ' 行无效' : '')
+        + (dupList.length ? '；' + dupList.length + ' 行重复' : '');
+      return;
+    }
+    var created = 0;
+    okList.forEach(function (it) {
+      try {
+        Store.act('subnet-add', { cidr: it.cidr, name: it.name || it.cidr, vlan: vlan, note: '', groupId: groupId });
+        created++;
+      } catch (e) { badList.push(it.cidr + '（' + e.message + '）'); }
+    });
+    $('#dlg').close();
+    var msg = '已创建 ' + created + ' 个网段';
+    if (dupList.length) msg += '，跳过重复 ' + dupList.length;
+    if (badList.length) msg += '，无效 ' + badList.length;
+    toast(msg, { err: badList.length > 0, ms: 6000 });
+    if (badList.length) {
+      Dialog.confirm('部分行未创建（' + badList.length + '）',
+        '<pre class="io-detail">' + esc(badList.join('\n')) + '</pre>', null, '关闭');
+    }
+  };
+  foot.appendChild(cancel); foot.appendChild(ok);
+  $('#dlg').showModal();
+  $('#db-cidrs').focus();
 };
 
 /* ============================================================
@@ -3575,6 +3775,7 @@ Wizard.autoMap = function (headers) {
     [/mac|物理地址/i, 'mac'],
     [/用途|目的|用途说明|purpose|描述/i, 'purpose'],
     [/类型|设备类型|type|device/i, 'deviceType'],
+    [/^标签$|标签|tag/i, 'tags'],
     [/备注|说明|note|remark|comment/i, 'note'],
     [/状态|status/i, 'status'],
     [/^子网$|^站点$|^区域$|网段|cidr|subnet|vlan/i, 'subnet']
@@ -5652,6 +5853,7 @@ Events.init = function () {
         case 'side-del': SideSel.remove(); break;
         case 'group-pick': ev.stopPropagation(); SideSel.toggleGroup(id); break;
         case 'add-subnet': Dialog.promptSubnet(); break;
+        case 'add-subnet-batch': Dialog.promptSubnetBatch(); break;
         case 'add-group': Dialog.promptGroup(); break;
         case 'group-edit': ev.stopPropagation(); Dialog.promptGroup(id); break;
         case 'group-delete': ev.stopPropagation(); Events.deleteGroup(id); break;
@@ -6980,8 +7182,9 @@ function runSelftest() {
   box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:var(--panel);color:var(--text);padding:20px;overflow:auto;max-height:70vh;border-bottom:3px solid var(--accent);font-family:Consolas,monospace;font-size:13px';
   box.innerHTML = html;
   document.body.appendChild(box);
-  // 同步用例已跑完，恢复持久化（后续外部自动化在 ?selftest 页仍可验证落盘）
+  // 同步用例已跑完：恢复持久化，并清空桩用例留下的撤销历史（避免污染后续真实操作）
   Store.suppressPersist = false;
+  if (typeof Undo !== 'undefined') { Undo.undoStack.length = 0; Undo.redoStack.length = 0; }
   // 处理返回 Promise 的用例（zip 往返）
   cases.forEach(function (c, idx) { /* 同步结果已渲染 */ });
   // 重新跑异步断言并补渲染
