@@ -72,9 +72,19 @@ header .spacer { flex:1; }
 /* ---------- layout ---------- */
 main { flex:1; display:flex; min-height:0; }
 #sidebar {
-  width:260px; min-width:260px; background:var(--panel);
+  width:var(--sidebar-w, 260px); min-width:200px; max-width:560px;
+  background:var(--panel); position:relative;
   border-right:1px solid var(--border); display:flex; flex-direction:column;
 }
+/* 右边缘拖拽手柄：默认透明，hover/拖动时高亮 */
+#side-resizer {
+  position:absolute; top:0; right:-3px; width:7px; height:100%;
+  cursor:col-resize; z-index:5; background:transparent;
+  transition:background .15s ease;
+}
+#side-resizer:hover, #side-resizer.dragging { background:var(--accent); opacity:.55; }
+body.side-resizing { cursor:col-resize; user-select:none; }
+body.side-resizing #grid { pointer-events:none; }
 .side-head {
   padding:10px 12px 6px; font-weight:600;
 }
@@ -740,7 +750,7 @@ dialog::backdrop { background:rgba(15,23,42,.42); }
   header .spacer { display:none; }
   #search { order:3; flex-basis:100%; max-width:none; }
   header .hbtn { flex:1 1 auto; }
-  #sidebar { width:220px; min-width:220px; }
+  #sidebar { width:var(--sidebar-w, 220px); min-width:200px; }
   #toolbar { padding:8px 12px; }
   #stats { padding:8px 12px; gap:12px; }
   #grid-wrap { overflow-x:auto; }
@@ -748,7 +758,8 @@ dialog::backdrop { background:rgba(15,23,42,.42); }
 }
 @media (max-width:720px) {
   main { display:block; overflow:auto; }
-  #sidebar { width:100%; min-width:0; max-height:220px; border-right:0; border-bottom:1px solid var(--border); }
+  #sidebar { width:100%; min-width:0; max-width:none; max-height:220px; border-right:0; border-bottom:1px solid var(--border); }
+  #side-resizer { display:none; }
   #subnet-list { display:flex; gap:8px; overflow-x:auto; padding:8px 10px; }
   .snt-card { min-width:210px; margin-bottom:0; }
   #content { min-height:calc(100vh - 280px); overflow:visible; }
@@ -869,6 +880,7 @@ footer button:disabled { color:var(--muted); text-decoration:none; cursor:defaul
 
 <main>
   <aside id="sidebar">
+    <div id="side-resizer" title="拖动调整侧栏宽度（双击复位）"></div>
     <div class="side-head">网段列表</div>
     <div class="side-tools-row">
       <select id="subnet-sort" class="side-sort" title="网段排序方式">
@@ -1437,7 +1449,8 @@ Data.loadSettings = function () {
     showNetBc: true,
     panelDirtyTip: true,
     subnetSort: 'created', // created | name | cidr | util
-    collapsedGroups: {}    // { groupId: true } 折叠的目录
+    collapsedGroups: {},   // { groupId: true } 折叠的目录
+    sidebarW: 260          // 侧栏宽度（px），拖拽手柄调整
   }, s || {});
 };
 Data.saveSettings = function () {
@@ -2441,6 +2454,87 @@ Undo.openDialog = function () {
   });
   Store.sub(Undo.syncButtons);   // 随每次 emit 同步按钮可用态
 })();
+
+/* ============================================================
+ * [7a] SideResize —— 侧栏拖拽调宽（宽度持久化，双击复位）
+ * ============================================================ */
+var SideResize = {};
+SideResize.MIN = 200;
+SideResize.MAX = 560;
+SideResize.DEFAULT = 260;
+
+// 应用宽度到 CSS 变量（不触发 act/persist，拖动过程高频调用）
+SideResize.apply = function (w) {
+  w = Math.max(SideResize.MIN, Math.min(SideResize.MAX, Math.round(w)));
+  document.documentElement.style.setProperty('--sidebar-w', w + 'px');
+  return w;
+};
+SideResize.current = function () {
+  return parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w'), 10) || SideResize.DEFAULT;
+};
+SideResize.commit = function (w) {
+  Store.state.settings.sidebarW = w;
+  Data.saveSettings();
+};
+SideResize.reset = function () {
+  var w = SideResize.apply(SideResize.DEFAULT);
+  SideResize.commit(w);
+  toast('侧栏宽度已复位为 ' + w + 'px');
+};
+
+SideResize.init = function () {
+  var handle = document.getElementById('side-resizer');
+  if (!handle) return;
+  // 恢复持久化宽度
+  var saved = parseInt(Store.state.settings.sidebarW, 10);
+  if (saved >= SideResize.MIN && saved <= SideResize.MAX) SideResize.apply(saved);
+
+  var dragging = false, startX = 0, startW = 0;
+  var onDown = function (ev) {
+    if (ev.button !== 0) return;
+    dragging = true;
+    startX = ev.clientX;
+    startW = document.querySelector('#sidebar').getBoundingClientRect().width;
+    handle.classList.add('dragging');
+    document.body.classList.add('side-resizing');
+    ev.preventDefault();
+  };
+  var onMove = function (ev) {
+    if (!dragging) return;
+    SideResize.apply(startW + (ev.clientX - startX));
+  };
+  var onUp = function () {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    document.body.classList.remove('side-resizing');
+    SideResize.commit(SideResize.current());
+  };
+  handle.addEventListener('mousedown', onDown);
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+  // 触摸屏支持
+  handle.addEventListener('touchstart', function (ev) {
+    if (!ev.touches.length) return;
+    dragging = true;
+    startX = ev.touches[0].clientX;
+    startW = document.querySelector('#sidebar').getBoundingClientRect().width;
+    handle.classList.add('dragging');
+    ev.preventDefault();
+  }, { passive: false });
+  document.addEventListener('touchmove', function (ev) {
+    if (!dragging || !ev.touches.length) return;
+    SideResize.apply(startW + (ev.touches[0].clientX - startX));
+  }, { passive: true });
+  document.addEventListener('touchend', function () {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    SideResize.commit(SideResize.current());
+  });
+  // 双击复位
+  handle.addEventListener('dblclick', SideResize.reset);
+};
 
 /* ============================================================
  * [7b] SideSel —— 侧栏网段多选与批量删除
@@ -7270,6 +7364,7 @@ function boot() {
   $('#density').value = Store.state.settings.density;
   $('#fontscale').value = Store.state.settings.fontScale;
   Events.init();
+  SideResize.init();
   Store.sub(function () { Render.all(); Panel.render(); });
   Render.all();
 
@@ -7277,7 +7372,7 @@ function boot() {
   if (location.search.indexOf('selftest') >= 0) {
     runSelftest();
     // 自测模式下暴露内部句柄供自动化验证
-    window.__test = { Store: Store, Render: Render, Panel: Panel, IO: IO, Data: Data, Calc: Calc, Wizard: Wizard, Rules: Rules, NetBox: NetBox, Dialog: Dialog, Events: Events, SideSel: SideSel, Batch: Batch, PanelExtras: PanelExtras, Audit: Audit, PngExport: PngExport };
+    window.__test = { Store: Store, Render: Render, Panel: Panel, IO: IO, Data: Data, Calc: Calc, Wizard: Wizard, Rules: Rules, NetBox: NetBox, Dialog: Dialog, Events: Events, SideSel: SideSel, Batch: Batch, PanelExtras: PanelExtras, Audit: Audit, PngExport: PngExport, SideResize: SideResize };
   }
 }
 boot();
